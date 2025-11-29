@@ -1,0 +1,29 @@
+{
+  "name": "My Test Map",
+  "nations": [
+    {
+      "coordinates": [500, 600],
+      "name": "North Kingdom",
+      "strength": 2,
+      "flag": "no"
+    },
+    {
+      "coordinates": [800, 800],
+      "name": "South Empire",
+      "strength": 3,
+      "flag": "se"
+    },
+    {
+      "coordinates": [300, 900],
+      "name": "West Republic",
+      "strength": 1,
+      "flag": "fi"
+    },
+    {
+      "coordinates": [1200, 600],
+      "name": "East Federation",
+      "strength": 2,
+      "flag": "dk"
+    }
+  ]
+}
