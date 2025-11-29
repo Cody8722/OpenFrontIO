@@ -1,0 +1,77 @@
+{
+  "name": "地狹",
+  "nations": [
+    {
+      "coordinates": [600, 400],
+      "name": "Western Realm",
+      "strength": 2,
+      "flag": "gb"
+    },
+    {
+      "coordinates": [1200, 500],
+      "name": "Northern Kingdom",
+      "strength": 3,
+      "flag": "no"
+    },
+    {
+      "coordinates": [2000, 400],
+      "name": "Central Empire",
+      "strength": 3,
+      "flag": "de"
+    },
+    {
+      "coordinates": [2800, 600],
+      "name": "Eastern Federation",
+      "strength": 2,
+      "flag": "ru"
+    },
+    {
+      "coordinates": [3400, 500],
+      "name": "Far East Alliance",
+      "strength": 2,
+      "flag": "jp"
+    },
+    {
+      "coordinates": [800, 1200],
+      "name": "Southern Republic",
+      "strength": 2,
+      "flag": "fr"
+    },
+    {
+      "coordinates": [1600, 1400],
+      "name": "Coastal States",
+      "strength": 1,
+      "flag": "nl"
+    },
+    {
+      "coordinates": [2400, 1300],
+      "name": "Mountain Confederacy",
+      "strength": 2,
+      "flag": "ch"
+    },
+    {
+      "coordinates": [3200, 1500],
+      "name": "Island Nation",
+      "strength": 1,
+      "flag": "au"
+    },
+    {
+      "coordinates": [1000, 900],
+      "name": "Trade Alliance",
+      "strength": 2,
+      "flag": "it"
+    },
+    {
+      "coordinates": [2800, 1000],
+      "name": "Desert Kingdoms",
+      "strength": 2,
+      "flag": "sa"
+    },
+    {
+      "coordinates": [3600, 1200],
+      "name": "Frontier Territories",
+      "strength": 1,
+      "flag": "us"
+    }
+  ]
+}
