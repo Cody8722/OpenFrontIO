@@ -8,6 +8,10 @@ import {
   AttackPolicy,
   RuleAttackPolicy,
 } from "@openfront/engine/execution/utils/AttackPolicy";
+import {
+  NetworkAttackPolicy,
+  newTakeoverStats,
+} from "@openfront/engine/execution/utils/NetworkAttackPolicy";
 import { Game } from "@openfront/engine/game/Game";
 import fs from "fs";
 import os from "os";
@@ -56,6 +60,8 @@ export function probed(base: Factory): Factory {
 }
 
 const rules: Factory = () => new RuleAttackPolicy();
+const network: Factory = (nation, game) =>
+  new NetworkAttackPolicy(game, nation.playerInfo.id, newTakeoverStats());
 const recorder: Factory = (nation, game) =>
   new DecisionRecorder(
     game,
@@ -73,6 +79,7 @@ describe("policy queries must not change the game", () => {
   test.each([
     ["the rules", rules],
     ["the recorder", recorder],
+    ["the network takeover", network],
   ])(
     "probing every player leaves %s unchanged",
     async (_n, base) => {
