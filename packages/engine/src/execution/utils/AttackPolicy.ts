@@ -54,6 +54,11 @@ export interface StrengthContext {
   /** Whether a land or boat attack on target is possible right now; free of side effects. */
   canReach(target: Player): boolean;
   /**
+   * The (up to two) players the island rule picks from, nearest first; side-effect
+   * free and draws no random numbers. The rule itself picks the second one 1 time in 3.
+   */
+  islandCandidates(): Player[];
+  /**
    * Attacks target with fraction (0..1) of the rules' base amount; the
    * safety caps (troopSendCap, too-weak check) still apply afterwards.
    * Returns true if an attack was sent.

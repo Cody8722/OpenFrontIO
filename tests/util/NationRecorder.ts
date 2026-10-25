@@ -91,6 +91,7 @@ export const CAND_FEATURES = [
   "juicyGapNorm",
   "juicyTilesNorm",
   "juicyScore", // sum of the three normalised parts
+  "islandRank", // 1/2: nearest / second nearest reachable (the island rule's picks), 0: neither
 ] as const;
 
 export const SCHEMA = {
@@ -391,6 +392,14 @@ export class DecisionRecorder implements AttackPolicy {
         list.push(player);
       }
     }
+    // The island rule picks outside both groups and relations
+    const island = this.mode === "nocr" ? [] : ctx.islandCandidates();
+    for (const player of island) {
+      if (!groupOf.has(player)) {
+        groupOf.set(player, -1);
+        list.push(player);
+      }
+    }
 
     // my border tiles touching each player
     const borderLen = new Map<Player, number>();
@@ -494,6 +503,7 @@ export class DecisionRecorder implements AttackPolicy {
         gN,
         tN,
         sN + gN + tN,
+        island.indexOf(p) + 1,
       ].map(r5);
     });
     return { list, rows };

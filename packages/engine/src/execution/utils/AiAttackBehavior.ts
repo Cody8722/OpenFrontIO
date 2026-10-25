@@ -642,6 +642,8 @@ export class AiAttackBehavior {
             rules: { hated, veryWeak, juicy, victim, crown, weakest, island },
             groups: targetGroups,
             canReach: (target) => this.canReachQuietly(target),
+            islandCandidates: () =>
+              this.quietly(() => this.nearestIslandCandidates()),
             attack: (target, fraction) =>
               this.sendWithFraction(target, fraction),
           }),
@@ -1056,8 +1058,22 @@ export class AiAttackBehavior {
   }
 
   private findNearestIslandEnemy(): Player | null {
+    const reachablePlayers = this.nearestIslandCandidates();
+    if (reachablePlayers.length === 0) return null;
+
+    // 33% chance to pick the second-nearest player if available
+    if (reachablePlayers.length >= 2 && this.random.chance(3)) {
+      return reachablePlayers[1];
+    }
+
+    return reachablePlayers[0];
+  }
+
+  // The (up to two) nearest reachable players findNearestIslandEnemy picks from;
+  // draws nothing from the PRNG
+  private nearestIslandCandidates(): Player[] {
     if (this.game.config().isUnitDisabled(UnitType.TransportShip)) {
-      return null;
+      return [];
     }
 
     // Check if we've already sent out the maximum number of transport ships
@@ -1065,14 +1081,14 @@ export class AiAttackBehavior {
       this.player.unitCount(UnitType.TransportShip) >=
       this.game.config().boatMaxNumber()
     ) {
-      return null;
+      return [];
     }
 
     // Check if we have any shore tiles to launch from
     const hasShore = Array.from(this.player.borderTiles()).some((t) =>
       this.game.isShore(t),
     );
-    if (!hasShore) return null;
+    if (!hasShore) return [];
 
     const filteredPlayers = this.game.players().filter((p) => {
       if (p === this.player) return false;
@@ -1081,7 +1097,7 @@ export class AiAttackBehavior {
       return !this.isFFA() || p.troops() < this.player.troops();
     });
 
-    if (filteredPlayers.length === 0) return null;
+    if (filteredPlayers.length === 0) return [];
 
     const playerCenter = this.getPlayerCenter(this.player);
 
@@ -1118,14 +1134,7 @@ export class AiAttackBehavior {
       }
     }
 
-    if (reachablePlayers.length === 0) return null;
-
-    // 33% chance to pick the second-nearest player if available
-    if (reachablePlayers.length >= 2 && this.random.chance(3)) {
-      return reachablePlayers[1];
-    }
-
-    return reachablePlayers[0];
+    return reachablePlayers;
   }
 
   // In team games, nations should be willing to attack/boat into stronger
@@ -1602,10 +1611,15 @@ export class AiAttackBehavior {
   // canReach for policies: leaves the planned-route cache alone, because the
   // routes in it (the rules' picks) decide which blocked lanes get cleared afterwards
   private canReachQuietly(target: Player): boolean {
+    return this.quietly(() => this.canReach(target));
+  }
+
+  // Runs a query with the planned-route cache switched off, so it changes nothing
+  private quietly<T>(query: () => T): T {
     const cache = this.boatRoutes;
     this.boatRoutes = null;
     try {
-      return this.canReach(target);
+      return query();
     } finally {
       this.boatRoutes = cache;
     }

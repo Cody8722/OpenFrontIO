@@ -9,7 +9,9 @@ import {
   RuleAttackPolicy,
 } from "@openfront/engine/execution/utils/AttackPolicy";
 import { Game } from "@openfront/engine/game/Game";
+import fs from "fs";
 import os from "os";
+import path from "path";
 import { DecisionRecorder } from "./util/NationRecorder";
 import { TraceSpec, traceWorld } from "./util/NationTrace";
 
@@ -41,6 +43,7 @@ export function probed(base: Factory): Factory {
         return [
           () => {
             ctx.groups();
+            ctx.islandCandidates();
             for (const p of game.players()) {
               if (p.id() !== id && p.isAlive()) ctx.canReach(p);
             }
@@ -95,6 +98,43 @@ describe("policy queries must not change the game", () => {
     } finally {
       proto.canReachQuietly = quiet;
     }
+  }, 600_000);
+});
+
+describe("candidate set covers the rules", () => {
+  test("every target the rules attack is among the recorded candidates", async () => {
+    const file = path.join(os.tmpdir(), `nn-cover-${process.pid}.jsonl`);
+    fs.rmSync(file, { force: true });
+    const recorders: DecisionRecorder[] = [];
+    let idx = 0;
+    await traceWorld(
+      spec({ gameID: "nn-cover" }),
+      undefined,
+      undefined,
+      (n, g) => {
+        const r = new DecisionRecorder(
+          g,
+          n.playerInfo.id,
+          idx++,
+          "nn-cover",
+          file,
+          "full",
+        );
+        recorders.push(r);
+        return r;
+      },
+    );
+    recorders.forEach((r) => r.flush());
+    const rows = fs
+      .readFileSync(file, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((r) => r.t === "t" && r.rule !== null);
+    fs.rmSync(file, { force: true });
+    const island = rows.filter((r) => r.rule === "island");
+    expect(island.length).toBeGreaterThan(0);
+    expect(rows.filter((r) => r.out).length).toBe(0);
   }, 600_000);
 });
 
