@@ -22,8 +22,10 @@ import {
   fortPositions,
   logLine,
   NationSiegeResult,
+  WavesResult,
   placeCities,
   runNationSiege,
+  runWaves,
   SiegeConfig,
   siegeMap,
   siegeWorld,
@@ -281,6 +283,51 @@ describe.skipIf(!ENABLED)("fortress vs billion-scale nation", () => {
           `[breakeven] 防守${fmt(defTroops)} ${fort} → 失地 ${(r.lostFrac * 100).toFixed(1)}% 進攻方損失 ${fmt(r.nationLoss)} 防守兵末 ${fmt(r.defTroopsEnd)} ${r.endReason} t=${r.ticks}`,
         );
       }
+    }
+  }, 3_600_000);
+
+  test("waves: 10 minutes of real NationExecution attacks, fort vs none, 30 vs 21", async () => {
+    logLine(`==== waves ${new Date().toISOString()} ====`);
+    const seeds = (process.env.FORT_WAVE_SEEDS ?? "1").split(",").map(Number);
+    // FORT_WAVE_FULL=1: the defender starts at its cap instead of 1e8.
+    const full = process.env.FORT_WAVE_FULL === "1";
+    const diff =
+      (process.env.FORT_WAVE_DIFF as Difficulty | undefined) ?? Difficulty.Hard;
+    const dtag = diff === Difficulty.Hard ? "" : `-${diff}`;
+    const out: WavesResult[] = [];
+    for (const seed of seeds) {
+      for (const defCap of [2e8, 4e8]) {
+        for (const fort of ["none", "lat30", "lat21"] as const) {
+          out.push(
+            await runWaves({
+              label: `w${fmt(defCap)}-${fort}-s${seed}${full ? "-full" : ""}${dtag}`,
+              seed,
+              nationTroops: 2e8,
+              nationCap: 4e8,
+              difficulty: diff,
+              defTroops: full ? defCap : 1e8,
+              defCap,
+              fort,
+              maxTicks: 6000,
+              sampleEvery: 10,
+              attackerCols: 600,
+              defenderCols: 200,
+              rows: 500,
+            }),
+          );
+        }
+      }
+    }
+    logLine("---- waves 對照(我方 1e8 兵,nation 2e8/上限 4e8,10 分鐘) ----");
+    for (const r of out) {
+      const sizes = r.waves.map((x) => fmt(x.troops)).join(",");
+      const gaps = r.waves
+        .slice(1)
+        .map((x) => x.interval)
+        .join(",");
+      logLine(
+        `${r.spec.label.padEnd(18)} | 堡壘 ${String(r.posts0).padStart(3)}→${String(r.postsEnd).padStart(3)} | ${r.waves.length} 波 投入[${sizes}] 間隔tick[${gaps}] | 領土 100%→${((r.defTilesEnd / 100000) * 100).toFixed(1)}% | 領土<50%@${r.tickTiles50 ?? "-"} 兵<進行中攻擊@${r.tickBelowAttack ?? "-"} 兵<上一波@${r.tickBelowLastWave ?? "-"} 滅亡@${r.tickDead ?? "-"}`,
+      );
     }
   }, 3_600_000);
 

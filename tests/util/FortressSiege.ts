@@ -16,6 +16,7 @@ import {
   UnitType,
 } from "@openfront/engine-api/game/GameTypes";
 import type { GameConfig } from "@openfront/engine-api/Schemas";
+import { pow } from "@openfront/engine-lib/DetMath";
 import { genTerrainFromBin } from "@openfront/engine-lib/game/TerrainMapLoader";
 import {
   AttackLogicInput,
@@ -951,6 +952,262 @@ export async function runNationSiege(
   );
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(res));
+  return res;
+}
+
+// ------------------------------------------------------- sustained waves
+
+export interface WavesSpec {
+  label: string;
+  /** Changes the NationExecution game id, hence its random trigger/reserve/attack rhythm. */
+  seed: number;
+  nationTroops: number;
+  /** Target troop cap of the nation; its city levels are derived from it. */
+  nationCap: number;
+  difficulty: Difficulty;
+  defTroops: number;
+  /** Target troop cap of the defender (infiniteTroops off, cities decide). */
+  defCap: number;
+  fort: FortPlan;
+  maxTicks: number;
+  sampleEvery: number;
+  attackerCols: number;
+  defenderCols: number;
+  rows: number;
+}
+
+export interface WaveRecord {
+  index: number;
+  tick: number;
+  troops: number;
+  /** Ticks since the previous wave (null for the first). */
+  interval: number | null;
+  defTilesAtStart: number;
+  defTroopsAtStart: number;
+  nationPoolAtStart: number;
+  /** Defender tiles lost between this wave's start and the next one (or the end). */
+  lostTilesUntilNext: number;
+}
+
+export interface WaveSample {
+  tick: number;
+  nationPool: number;
+  attack: number;
+  nationTiles: number;
+  nationCap: number;
+  defTroops: number;
+  defTiles: number;
+  defCap: number;
+  posts: number;
+}
+
+export interface WavesResult {
+  spec: WavesSpec;
+  nationCap0: number;
+  defCap0: number;
+  posts0: number;
+  coverage: number;
+  waves: WaveRecord[];
+  tickTiles50: number | null;
+  tickBelowAttack: number | null;
+  tickBelowLastWave: number | null;
+  tickDead: number | null;
+  defTilesEnd: number;
+  defTroopsEnd: number;
+  postsEnd: number;
+  ticks: number;
+  samples: WaveSample[];
+  elapsedMs: number;
+}
+
+/** City levels that give `cap` troops at `tiles` owned tiles (2*(tiles^0.6*1000+50000) + levels*250000). */
+export function levelsForCap(cap: number, tiles: number): number {
+  const base = 2 * (pow(tiles, 0.6) * 1000 + 50000);
+  return Math.max(0, Math.round((cap - base) / 250_000));
+}
+
+function wlog(line: string): void {
+  const dir = path.join(DATA_DIR, "nuke");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, "waves.log"), `${line}\n`);
+  console.log(line);
+}
+
+export async function runWaves(spec: WavesSpec): Promise<WavesResult> {
+  const t0 = performance.now();
+  wlog(
+    `[waves] ${spec.label} 開始 seed=${spec.seed} nation兵=${fmt(spec.nationTroops)} nation上限=${fmt(spec.nationCap)} 難度=${spec.difficulty} 我方兵=${fmt(spec.defTroops)} 我方上限=${fmt(spec.defCap)} fort=${spec.fort} ${spec.maxTicks} tick`,
+  );
+  const m = siegeMap(spec.attackerCols, spec.defenderCols, spec.rows);
+  const w = await siegeWorld(m, {
+    attackerType: PlayerType.Nation,
+    config: {
+      difficulty: spec.difficulty,
+      nations: "default",
+      infiniteTroops: false,
+    },
+  });
+  const { game, attacker, defender, config } = w;
+  const posts0 = buildForts(w, fortPositions(m, spec.fort));
+  const cover = coverage(w);
+
+  // Nation cities: fixed total levels so its cap is what the request says.
+  placeCities(w, levelsForCap(spec.nationCap, attacker.numTilesOwned()));
+  // Defender cities spread over its land (the front ones fall first, as in a real game).
+  const defLevels = levelsForCap(spec.defCap, defender.numTilesOwned());
+  const spots: Point[] = [];
+  for (let y = MARGIN + 10; y < MARGIN + m.rows - 5; y += 20) {
+    for (let x = m.frontX + 8; x < m.frontX + m.defenderCols - 5; x += 20) {
+      spots.push({ x, y });
+    }
+  }
+  const nCity = Math.min(spots.length, Math.max(1, Math.ceil(defLevels / 30)));
+  const defCities = spots
+    .slice(0, nCity)
+    .map((p) => defender.buildUnit(UnitType.City, game.ref(p.x, p.y), {}));
+  for (
+    let i = 0, left = defLevels - nCity;
+    left > 0;
+    i = (i + 1) % nCity, left--
+  ) {
+    defCities[i].increaseLevel();
+  }
+
+  attacker.setTroops(spec.nationTroops);
+  defender.setTroops(spec.defTroops);
+  config.blockBuilds = true; // no new structures, boats or nukes from anyone
+  const defTiles0 = defender.numTilesOwned();
+  const nationCap0 = config.maxTroops(attacker);
+  const defCap0 = config.maxTroops(defender);
+  wlog(
+    `[waves] ${spec.label} 就緒 nation上限=${fmt(nationCap0)}(城市等級 ${attacker.units(UnitType.City).reduce((a, u) => a + u.level(), 0)}) 我方上限=${fmt(defCap0)}(城市等級 ${defender.units(UnitType.City).reduce((a, u) => a + u.level(), 0)}) 堡壘=${posts0} 涵蓋=${(cover * 100).toFixed(1)}% 我方格=${defTiles0} nation格=${attacker.numTilesOwned()}`,
+  );
+
+  const pending: { e: AttackExecution; tick: number }[] = [];
+  const origAdd = game.addExecution.bind(game);
+  game.addExecution = (...es: Parameters<Game["addExecution"]>) => {
+    for (const e of es) {
+      if (
+        e instanceof AttackExecution &&
+        e.owner() === attacker &&
+        e.targetID() === defender.id()
+      ) {
+        pending.push({ e, tick: game.ticks() });
+      }
+    }
+    return origAdd(...es);
+  };
+  game.addExecution(
+    new NationExecution(
+      `fortress-waves-${spec.seed}`,
+      new Nation(
+        undefined,
+        new PlayerInfo("attacker", PlayerType.Nation, null, "attacker"),
+      ),
+    ),
+  );
+
+  const attackTroops = () =>
+    attacker
+      .outgoingAttacks()
+      .filter((a) => a.target() === defender)
+      .reduce((s, a) => s + a.troops(), 0);
+  const waves: WaveRecord[] = [];
+  const samples: WaveSample[] = [];
+  const sample = (tick: number) => {
+    samples.push({
+      tick,
+      nationPool: attacker.troops(),
+      attack: attackTroops(),
+      nationTiles: attacker.numTilesOwned(),
+      nationCap: config.maxTroops(attacker),
+      defTroops: defender.troops(),
+      defTiles: defender.isAlive() ? defender.numTilesOwned() : 0,
+      defCap: config.maxTroops(defender),
+      posts: defender.units(UnitType.DefensePost).length,
+    });
+  };
+  sample(0);
+  let tick = 0;
+  let tickTiles50: number | null = null;
+  let tickBelowAttack: number | null = null;
+  let tickBelowLastWave: number | null = null;
+  let tickDead: number | null = null;
+  while (tick < spec.maxTicks) {
+    const preDefTiles = defender.numTilesOwned();
+    const preDefTroops = defender.troops();
+    const prePool = attacker.troops();
+    game.executeNextTick();
+    tick++;
+    attacker.removeGold(attacker.gold());
+    for (const p of pending.splice(0)) {
+      const sent = (p.e as unknown as { startTroops: number | null })
+        .startTroops;
+      if (sent === null) continue;
+      const prev = waves[waves.length - 1];
+      waves.push({
+        index: waves.length + 1,
+        tick: p.tick,
+        troops: sent,
+        interval: prev ? p.tick - prev.tick : null,
+        defTilesAtStart: preDefTiles,
+        defTroopsAtStart: preDefTroops,
+        nationPoolAtStart: prePool,
+        lostTilesUntilNext: 0,
+      });
+      wlog(
+        `[waves] ${spec.label} 第${waves.length}波 t=${p.tick}(${(p.tick / 10).toFixed(0)}s) 投入=${fmt(sent)} 距上一波=${prev ? p.tick - prev.tick : "-"}tick 我方兵=${fmt(preDefTroops)} 我方格=${preDefTiles} nation池=${fmt(prePool)}`,
+      );
+    }
+    const tiles = defender.isAlive() ? defender.numTilesOwned() : 0;
+    const atk = attackTroops();
+    const last = waves[waves.length - 1];
+    if (tickTiles50 === null && tiles < defTiles0 * 0.5) tickTiles50 = tick;
+    if (tickBelowAttack === null && atk > 0 && defender.troops() < atk)
+      tickBelowAttack = tick;
+    if (tickBelowLastWave === null && last && defender.troops() < last.troops)
+      tickBelowLastWave = tick;
+    if (tick % spec.sampleEvery === 0) sample(tick);
+    if (!defender.isAlive()) {
+      tickDead = tick;
+      break;
+    }
+  }
+  sample(tick);
+  for (let i = 0; i < waves.length; i++) {
+    const startTiles = waves[i].defTilesAtStart;
+    const endTiles =
+      i + 1 < waves.length
+        ? waves[i + 1].defTilesAtStart
+        : defender.isAlive()
+          ? defender.numTilesOwned()
+          : 0;
+    waves[i].lostTilesUntilNext = startTiles - endTiles;
+  }
+  const res: WavesResult = {
+    spec,
+    nationCap0,
+    defCap0,
+    posts0,
+    coverage: cover,
+    waves,
+    tickTiles50,
+    tickBelowAttack,
+    tickBelowLastWave,
+    tickDead,
+    defTilesEnd: defender.isAlive() ? defender.numTilesOwned() : 0,
+    defTroopsEnd: defender.troops(),
+    postsEnd: defender.units(UnitType.DefensePost).length,
+    ticks: tick,
+    samples,
+    elapsedMs: performance.now() - t0,
+  };
+  wlog(
+    `[waves] ${spec.label} 結束 tick=${tick} 共${waves.length}波 我方格 ${defTiles0}→${res.defTilesEnd}(${((res.defTilesEnd / defTiles0) * 100).toFixed(1)}%) 我方兵 ${fmt(spec.defTroops)}→${fmt(res.defTroopsEnd)} 堡壘 ${posts0}→${res.postsEnd} 領土<50%@${tickTiles50} 兵<進行中攻擊@${tickBelowAttack} 兵<上一波@${tickBelowLastWave} 滅亡@${tickDead} 耗時=${(res.elapsedMs / 1000).toFixed(1)}s`,
+  );
+  const dir = path.join(DATA_DIR, "nuke", "waves");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${spec.label}.json`), JSON.stringify(res));
   return res;
 }
 

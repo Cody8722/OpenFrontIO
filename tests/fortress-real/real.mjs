@@ -20,7 +20,9 @@ import {
   waitForTick,
 } from "../../.claude/skills/run-openfront/game.mjs";
 
-const OUT = path.resolve(".fortress-siege-data/real");
+const OUT = path.resolve(
+  process.env.FORT_LOG_DIR ?? ".fortress-siege-data/real",
+);
 const SHOTS = path.join(OUT, "shots");
 fs.mkdirSync(SHOTS, { recursive: true });
 const T0 = Date.now();
@@ -381,13 +383,11 @@ export async function coverageOf(page, range = 30) {
   return await page.evaluate((r) => {
     const g = document.querySelector("build-menu").game;
     const me = g.myPlayer();
-    const posts = me
-      .units("Defense Post")
-      .map((u) => ({
-        x: g.x(u.tile()),
-        y: g.y(u.tile()),
-        done: !u.isUnderConstruction?.(),
-      }));
+    const posts = me.units("Defense Post").map((u) => ({
+      x: g.x(u.tile()),
+      y: g.y(u.tile()),
+      done: !u.isUnderConstruction?.(),
+    }));
     const loc = me.nameLocation();
     const cx = Math.round(loc?.x ?? 0);
     const cy = Math.round(loc?.y ?? 0);
@@ -621,6 +621,77 @@ async function topPlayers(page, n = 4) {
   }, n);
 }
 
+/**
+ * Anti-air and silo picture of the biggest nations by territory: SAM count and
+ * level spread, share of its land inside some SAM's range (and inside >=5),
+ * silos. Coverage is sampled on a 5-tile grid inside its bounding area.
+ */
+async function samPicture(page, n = 4) {
+  return await page.evaluate((k) => {
+    const g = document.querySelector("build-menu").game;
+    const cfg = g.config();
+    const players = g
+      .players()
+      .filter((p) => p.isAlive() && p.type() === "NATION")
+      .sort((a, b) => b.numTilesOwned() - a.numTilesOwned())
+      .slice(0, k);
+    return players.map((p) => {
+      const sams = p.units("SAM Launcher").map((u) => ({
+        x: g.x(u.tile()),
+        y: g.y(u.tile()),
+        level: u.level(),
+        r: cfg.samRange(u.level()),
+      }));
+      const silos = p.units("Missile Silo").map((u) => u.level());
+      const loc = p.nameLocation();
+      const cx = Math.round(loc?.x ?? 0);
+      const cy = Math.round(loc?.y ?? 0);
+      const R = 700;
+      let total = 0;
+      let covered = 0;
+      let covered5 = 0;
+      for (
+        let y = Math.max(0, cy - R);
+        y < Math.min(g.height(), cy + R);
+        y += 5
+      ) {
+        for (
+          let x = Math.max(0, cx - R);
+          x < Math.min(g.width(), cx + R);
+          x += 5
+        ) {
+          if (g.owner(g.ref(x, y)) !== p) continue;
+          total++;
+          let c = 0;
+          for (const s of sams) {
+            if ((s.x - x) ** 2 + (s.y - y) ** 2 <= s.r * s.r) c++;
+          }
+          if (c >= 1) covered++;
+          if (c >= 5) covered5++;
+        }
+      }
+      const lv = sams.map((s) => s.level);
+      const hist = { "1-3": 0, "4-10": 0, "11-50": 0, "51+": 0 };
+      for (const l of lv)
+        hist[l <= 3 ? "1-3" : l <= 10 ? "4-10" : l <= 50 ? "11-50" : "51+"]++;
+      return {
+        name: p.name(),
+        tiles: p.numTilesOwned(),
+        troops: p.troops(),
+        cityLevels: p.totalUnitLevels("City"),
+        samCount: sams.length,
+        samLevelSum: lv.reduce((a, b) => a + b, 0),
+        samMaxLevel: Math.max(0, ...lv),
+        samHist: hist,
+        covered: total ? covered / total : 0,
+        covered5: total ? covered5 / total : 0,
+        siloCount: silos.length,
+        siloLevelSum: silos.reduce((a, b) => a + b, 0),
+      };
+    });
+  }, n);
+}
+
 /** Real game: watch how big the computer nations get with 10x gold and a 1B start. */
 async function nations(durationS, difficulty) {
   const { browser, page } = await newSolo({
@@ -642,6 +713,7 @@ async function nations(durationS, difficulty) {
     log("按 3 次 '.' 加速到最快");
     await shot(page, "nations-start");
     const t0 = Date.now();
+    const samSeries = [];
     let lastTick = (await myState(page)).ticks;
     let lastT = Date.now();
     let next = 10;
@@ -666,6 +738,17 @@ async function nations(durationS, difficulty) {
           `   ${p.type.padEnd(6)} ${p.name.slice(0, 14).padEnd(14)} 格=${p.tiles} 兵=${p.troops} (${(p.troops / 1e6).toFixed(1)}M, 畫面顯示 ${(p.troops / 1e7).toFixed(1)}M) 城市等級=${p.levels} 上限=${p.cap.toExponential(2)} 進攻中最大=${p.attack}`,
         );
       }
+      const pics = await samPicture(page);
+      samSeries.push({ elapsedS: el, tick: s.ticks, nations: pics });
+      for (const q of pics) {
+        log(
+          `   SAM ${q.name.slice(0, 12).padEnd(12)} 格=${q.tiles} SAM=${q.samCount}座 等級和=${q.samLevelSum} 最高=${q.samMaxLevel} 分布=${JSON.stringify(q.samHist)} 覆蓋領土=${(q.covered * 100).toFixed(0)}% 其中>=5座重疊=${(q.covered5 * 100).toFixed(0)}% 飛彈井=${q.siloCount}座 等級和=${q.siloLevelSum} 城市等級=${q.cityLevels}`,
+        );
+      }
+      fs.writeFileSync(
+        path.join(OUT, "sam-series.json"),
+        JSON.stringify(samSeries),
+      );
     }
     await shot(page, "nations-end");
   } finally {
