@@ -66,9 +66,15 @@ export interface StrengthContext {
   attack(target: Player, fraction: number): boolean;
 }
 
+/** What an observer is told when an attack turn starts. */
+export interface TurnInfo {
+  reserveRatio: number;
+  triggerRatio: number;
+}
+
 export interface AttackPolicy {
   /** Optional observers, for recording data; they must not touch the game or the PRNG. */
-  beginTurn?(): void;
+  beginTurn?(info: TurnInfo): void;
   /** An attack or transport ship left: land attacks and boats, in the order sent. */
   attackSent?(
     target: Player | TerraNullius,

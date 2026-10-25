@@ -34,7 +34,7 @@ export function probed(base: Factory): Factory {
     const inner = base(nation, game);
     const id = nation.playerInfo.id;
     return {
-      beginTurn: () => inner.beginTurn?.(),
+      beginTurn: (info) => inner.beginTurn?.(info),
       endTurn: () => inner.endTurn?.(),
       attackSent: (t, n, k) => inner.attackSent?.(t, n, k),
       engage: (ctx) => inner.engage(ctx),

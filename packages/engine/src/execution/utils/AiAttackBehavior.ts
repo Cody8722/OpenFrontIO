@@ -156,7 +156,10 @@ export class AiAttackBehavior {
     const routes = new Map<Player, BoatRoute | null>();
     this.boatRoutes = routes;
     let landFront = false;
-    this.activePolicy().beginTurn?.();
+    this.activePolicy().beginTurn?.({
+      reserveRatio: this.reserveRatio,
+      triggerRatio: this.triggerRatio,
+    });
     try {
       this.chooseAttack();
       for (const neighbor of this.landNeighbors ?? []) {
