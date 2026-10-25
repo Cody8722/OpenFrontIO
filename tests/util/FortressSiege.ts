@@ -9,6 +9,7 @@ import {
   GameMapType,
   GameMode,
   GameType,
+  Nation,
   PlayerInfo,
   PlayerType,
   TerrainType,
@@ -23,6 +24,7 @@ import {
 } from "@openfront/engine/configuration/EngineConfig";
 import { AttackExecution } from "@openfront/engine/execution/AttackExecution";
 import { ConstructionExecution } from "@openfront/engine/execution/ConstructionExecution";
+import { NationExecution } from "@openfront/engine/execution/NationExecution";
 import { PlayerExecution } from "@openfront/engine/execution/PlayerExecution";
 import { Game, Player } from "@openfront/engine/game/Game";
 import { createGame } from "@openfront/engine/game/GameImpl";
@@ -68,19 +70,55 @@ export class SiegeConfig extends EngineConfig {
     return 0;
   }
 
-  /** attackLogic runs once per conquered tile: count how many had a post. */
-  readonly tileStats = { tiles: 0, withPost: 0 };
+  /**
+   * attackLogic runs once per conquered tile: count how many had a post, and
+   * split the attacker's loss into the troops-per-tile ("density") term and
+   * the rest (rerun with the defender's troops at 0; valid while the defender
+   * ratio sits on the 0.6 floor, which every 10x attack here does).
+   */
+  readonly tileStats = { tiles: 0, withPost: 0, loss: 0, lossNoDensity: 0 };
+
+  /** After setup, stop every player from building (no cities, nukes or boats). */
+  blockBuilds = false;
+
+  isUnitDisabled(unitType: UnitType): boolean {
+    if (
+      this.blockBuilds &&
+      [
+        UnitType.City,
+        UnitType.Port,
+        UnitType.Factory,
+        UnitType.MissileSilo,
+        UnitType.SAMLauncher,
+        UnitType.Warship,
+        UnitType.AtomBomb,
+        UnitType.HydrogenBomb,
+        UnitType.MIRV,
+        UnitType.TransportShip,
+        UnitType.DefensePost,
+      ].includes(unitType)
+    ) {
+      return true;
+    }
+    return super.isUnitDisabled(unitType);
+  }
 
   attackLogic(input: AttackLogicInput): AttackLogicResult {
+    const res = super.attackLogic(input);
     if (input.defender !== null) {
       this.tileStats.tiles++;
       if (input.defenderHasDefensePost) this.tileStats.withPost++;
+      this.tileStats.loss += res.attackerTroopLoss;
+      this.tileStats.lossNoDensity += super.attackLogic({
+        ...input,
+        defender: { ...input.defender, troops: 0 },
+      }).attackerTroopLoss;
     }
-    return super.attackLogic(input);
+    return res;
   }
 }
 
-function gameConfigFor(): GameConfig {
+function gameConfigFor(overrides: Partial<GameConfig> = {}): GameConfig {
   return {
     gameMap: GameMapType.Asia,
     gameMapSize: GameMapSize.Normal,
@@ -96,6 +134,7 @@ function gameConfigFor(): GameConfig {
     infiniteTroops: true,
     instantBuild: true,
     randomSpawn: false,
+    ...overrides,
   };
 }
 
@@ -180,16 +219,31 @@ export interface SiegeWorld {
   map: SiegeMap;
 }
 
-export async function siegeWorld(m: SiegeMap): Promise<SiegeWorld> {
+export interface WorldOptions {
+  /** A Nation attacker has the formula cap (cities) instead of the human 1e9. */
+  attackerType?: PlayerType;
+  config?: Partial<GameConfig>;
+}
+
+export async function siegeWorld(
+  m: SiegeMap,
+  opts: WorldOptions = {},
+): Promise<SiegeWorld> {
   console.debug = () => {};
   const gameMap = await genTerrainFromBin(metaOf(m.map, m.w, m.h), m.map);
   const mini = await genTerrainFromBin(
     metaOf(m.mini, m.w >> 1, m.h >> 1),
     m.mini,
   );
-  const config = new SiegeConfig(gameConfigFor(), false);
+  const config = new SiegeConfig(gameConfigFor(opts.config), false);
+  const attackerType = opts.attackerType ?? PlayerType.Human;
   const humans = [
-    new PlayerInfo("attacker", PlayerType.Human, "c1", "attacker"),
+    new PlayerInfo(
+      "attacker",
+      attackerType,
+      attackerType === PlayerType.Human ? "c1" : null,
+      "attacker",
+    ),
     new PlayerInfo("defender", PlayerType.Human, "c2", "defender"),
   ];
   const game = createGame(humans, [], gameMap, mini, config);
@@ -211,7 +265,8 @@ export async function siegeWorld(m: SiegeMap): Promise<SiegeWorld> {
 
 // ------------------------------------------------------------ fortresses
 
-export type FortPlan = "none" | "full" | "band";
+/** "lat30" = square lattice with 30-tile spacing; "full" is lat42 shifted to start at 21. */
+export type FortPlan = "none" | "full" | "band" | `lat${number}`;
 
 export interface Point {
   x: number;
@@ -233,10 +288,11 @@ export function fortPositions(
   const out: Point[] = [];
   const y0 = MARGIN;
   const x0 = m.frontX;
-  if (plan === "full") {
-    const s = 42;
-    for (let y = y0 + 21; y < y0 + m.rows; y += s) {
-      for (let x = x0 + 21; x < x0 + m.defenderCols; x += s) out.push({ x, y });
+  if (plan === "full" || plan.startsWith("lat")) {
+    const s = plan === "full" ? 42 : Number(plan.slice(3));
+    const h = Math.floor(s / 2);
+    for (let y = y0 + h; y < y0 + m.rows; y += s) {
+      for (let x = x0 + h; x < x0 + m.defenderCols; x += s) out.push({ x, y });
     }
     return out;
   }
@@ -646,6 +702,256 @@ export function modelSiege(
     ticks: budget,
     attackLeft: Math.max(0, a),
   };
+}
+
+// ------------------------------------------------------- nation attacker
+
+export interface NationSiegeSpec {
+  label: string;
+  /** Troops the nation starts with (it regenerates normally afterwards). */
+  nationTroops: number;
+  /** Sum of the levels of its cities (each adds 250,000 to its troop cap). */
+  cityLevels: number;
+  difficulty: Difficulty;
+  defTroops: number;
+  fort: FortPlan;
+  /** Without it the real NationExecution decides when and how much to send. */
+  forceAllIn?: number;
+  attackerCols: number;
+  defenderCols: number;
+  rows: number;
+  maxTicks: number;
+  sampleEvery: number;
+  frameEvery: number;
+}
+
+export interface AttackSent {
+  tick: number;
+  troops: number;
+}
+
+export interface NationSample {
+  tick: number;
+  nationTroops: number;
+  outgoing: number;
+  defTroops: number;
+  defTiles: number;
+  posts: number;
+  conquered: number;
+  loss: number;
+  lossNoDensity: number;
+}
+
+export interface NationSiegeResult {
+  spec: NationSiegeSpec;
+  nationCap: number;
+  nationTroops0: number;
+  defTroops0: number;
+  defTiles0: number;
+  posts0: number;
+  coverage: number;
+  attacks: AttackSent[];
+  ticks: number;
+  endReason: string;
+  lostTiles: number;
+  lostFrac: number;
+  defTroopsEnd: number;
+  nationTroopsEnd: number;
+  nationLoss: number;
+  densityShare: number;
+  effCoverage: number;
+  tickTo50: number | null;
+  tickTo100: number | null;
+  samples: NationSample[];
+  frames: { tick: number; file: string }[];
+  elapsedMs: number;
+}
+
+/** Cities on the attacker's land, 20 tiles apart, carrying `levels` in total. */
+export function placeCities(w: SiegeWorld, levels: number): number {
+  const spots: Point[] = [];
+  for (let y = MARGIN + 20; y < MARGIN + w.map.rows - 10; y += 20) {
+    for (let x = MARGIN + 20; x < w.map.frontX - 40; x += 20)
+      spots.push({ x, y });
+  }
+  const n = Math.max(1, Math.min(spots.length, Math.ceil(levels / 400), 400));
+  const cities = spots
+    .slice(0, n)
+    .map((p) => w.attacker.buildUnit(UnitType.City, w.game.ref(p.x, p.y), {}));
+  let remaining = levels - n;
+  for (let i = 0; remaining > 0; i = (i + 1) % n, remaining--)
+    cities[i].increaseLevel();
+  return n;
+}
+
+export async function runNationSiege(
+  spec: NationSiegeSpec,
+): Promise<NationSiegeResult> {
+  const t0 = performance.now();
+  logLine(
+    `[nation] ${spec.label} 開始 nation兵=${fmt(spec.nationTroops)} 城市等級=${spec.cityLevels} 難度=${spec.difficulty} 防守兵=${fmt(spec.defTroops)} fort=${spec.fort} ${spec.forceAllIn ? `強制全上=${fmt(spec.forceAllIn)}` : "由 NationExecution 決定"}`,
+  );
+  const m = siegeMap(spec.attackerCols, spec.defenderCols, spec.rows);
+  const w = await siegeWorld(m, {
+    attackerType: PlayerType.Nation,
+    config: { difficulty: spec.difficulty, nations: "default" },
+  });
+  const { game, attacker, defender, config } = w;
+
+  const posts0 = buildForts(w, fortPositions(m, spec.fort));
+  const cover = coverage(w);
+  const cities = placeCities(w, spec.cityLevels);
+  config.blockBuilds = true;
+  attacker.setTroops(spec.nationTroops);
+  defender.setTroops(spec.defTroops);
+  const nationCap = config.maxTroops(attacker);
+  const defTiles0 = defender.numTilesOwned();
+  logLine(
+    `[nation] ${spec.label} 就緒 城市=${cities}座 總等級=${attacker.units(UnitType.City).reduce((a, u) => a + u.level(), 0)} nation上限=${fmt(nationCap)} nation兵=${fmt(attacker.troops())} 防守格=${defTiles0} 堡壘=${posts0} 涵蓋=${(cover * 100).toFixed(1)}% 防守上限=${fmt(config.maxTroops(defender))}`,
+  );
+
+  const pending: { e: AttackExecution; tick: number }[] = [];
+  const attacks: AttackSent[] = [];
+  const origAdd = game.addExecution.bind(game);
+  game.addExecution = (...es: Parameters<Game["addExecution"]>) => {
+    for (const e of es) {
+      if (
+        e instanceof AttackExecution &&
+        e.owner() === attacker &&
+        e.targetID() === defender.id()
+      ) {
+        pending.push({ e, tick: game.ticks() });
+      }
+    }
+    return origAdd(...es);
+  };
+
+  const dir = path.join(
+    DATA_DIR,
+    `nation-${spec.label.replace(/[^\w.-]+/g, "_")}`,
+  );
+  const frames: { tick: number; file: string }[] = [];
+  const snap = (tick: number) => {
+    if (spec.frameEvery <= 0) return;
+    const file = path.join(dir, `frame-${String(tick).padStart(5, "0")}.png`);
+    renderFrame(w, file);
+    frames.push({ tick, file });
+  };
+  snap(0);
+
+  if (spec.forceAllIn !== undefined) {
+    game.addExecution(
+      new AttackExecution(spec.forceAllIn, attacker, defender.id()),
+    );
+  } else {
+    game.addExecution(
+      new NationExecution(
+        "fortress-siege",
+        new Nation(
+          undefined,
+          new PlayerInfo("attacker", PlayerType.Nation, null, "attacker"),
+        ),
+      ),
+    );
+  }
+
+  const samples: NationSample[] = [];
+  const sample = (tick: number) => {
+    const out = attacker
+      .outgoingAttacks()
+      .filter((a) => a.target() === defender)
+      .reduce((s, a) => s + a.troops(), 0);
+    const s: NationSample = {
+      tick,
+      nationTroops: attacker.troops(),
+      outgoing: out,
+      defTroops: defender.troops(),
+      defTiles: defender.numTilesOwned(),
+      posts: defender.units(UnitType.DefensePost).length,
+      conquered: config.tileStats.tiles,
+      loss: config.tileStats.loss,
+      lossNoDensity: config.tileStats.lossNoDensity,
+    };
+    samples.push(s);
+    logLine(
+      `[nation] ${spec.label} t=${tick} nation兵=${fmt(s.nationTroops)} 進攻中=${fmt(s.outgoing)} 防守兵=${fmt(s.defTroops)} 防守格=${s.defTiles} 堡壘=${s.posts} 已奪=${s.conquered}`,
+    );
+  };
+  sample(0);
+
+  let tick = 0;
+  let endReason = "tick 上限";
+  let everAttacked = false;
+  let idle = 0;
+  let tickTo50: number | null = null;
+  let tickTo100: number | null = null;
+  while (tick < spec.maxTicks) {
+    game.executeNextTick();
+    tick++;
+    for (const p of pending.splice(0)) {
+      const sent = (p.e as unknown as { startTroops: number | null })
+        .startTroops;
+      if (sent !== null) {
+        attacks.push({ tick: p.tick, troops: sent });
+        logLine(
+          `[nation] ${spec.label} t=${p.tick} 發動進攻 投入=${fmt(sent)}`,
+        );
+      }
+    }
+    const lost =
+      defTiles0 - (defender.isAlive() ? defender.numTilesOwned() : 0);
+    if (tickTo50 === null && lost >= defTiles0 * 0.5) tickTo50 = tick;
+    if (tickTo100 === null && lost >= defTiles0 * 0.999) tickTo100 = tick;
+    if (tick % spec.sampleEvery === 0) sample(tick);
+    if (spec.frameEvery > 0 && tick % spec.frameEvery === 0) snap(tick);
+    if (!defender.isAlive()) {
+      endReason = "防守方被消滅";
+      break;
+    }
+    const hasAttack = attacker
+      .outgoingAttacks()
+      .some((a) => a.target() === defender);
+    if (hasAttack) everAttacked = true;
+    idle = hasAttack ? 0 : idle + 1;
+    if (everAttacked && idle >= 100) {
+      endReason = "進攻結束";
+      break;
+    }
+  }
+  sample(tick);
+  snap(tick);
+  const defTilesEnd = defender.isAlive() ? defender.numTilesOwned() : 0;
+  const ts = config.tileStats;
+  const res: NationSiegeResult = {
+    spec,
+    nationCap,
+    nationTroops0: spec.nationTroops,
+    defTroops0: spec.defTroops,
+    defTiles0,
+    posts0,
+    coverage: cover,
+    attacks,
+    ticks: tick,
+    endReason,
+    lostTiles: defTiles0 - defTilesEnd,
+    lostFrac: (defTiles0 - defTilesEnd) / defTiles0,
+    defTroopsEnd: defender.troops(),
+    nationTroopsEnd: attacker.troops(),
+    nationLoss: ts.loss,
+    densityShare: ts.loss > 0 ? 1 - ts.lossNoDensity / ts.loss : 0,
+    effCoverage: ts.tiles > 0 ? ts.withPost / ts.tiles : 0,
+    tickTo50,
+    tickTo100,
+    samples,
+    frames,
+    elapsedMs: performance.now() - t0,
+  };
+  logLine(
+    `[nation] ${spec.label} 結束(${endReason}) tick=${tick} 失地=${res.lostTiles}/${defTiles0}(${(res.lostFrac * 100).toFixed(1)}%) 50%@${tickTo50} 100%@${tickTo100} 進攻方損失=${fmt(ts.loss)} 密度項占比=${(res.densityShare * 100).toFixed(1)}% 被奪格有堡壘=${(res.effCoverage * 100).toFixed(1)}% 防守兵 ${fmt(spec.defTroops)}→${fmt(res.defTroopsEnd)} nation兵 ${fmt(spec.nationTroops)}→${fmt(res.nationTroopsEnd)} 耗時=${(res.elapsedMs / 1000).toFixed(1)}s`,
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(res));
+  return res;
 }
 
 // ----------------------------------------------------------------- report

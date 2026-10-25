@@ -148,6 +148,21 @@ describe.skipIf(!ENABLED)("fortress siege", () => {
     expect(results.length).toBe(6);
   }, 3_600_000);
 
+  test("spacing: lattice 42 / 30 / 21 in the original 1e8-attack scenario", async () => {
+    logLine(`==== spacing commit=${COMMIT} ${new Date().toISOString()} ====`);
+    const rows: string[] = [];
+    for (const mult of [1, 2, 4]) {
+      for (const fort of ["none", "lat42", "lat30", "lat21"] as const) {
+        const res = await runSiege(bigSpec(`s${mult}x-${fort}`, mult, fort));
+        rows.push(
+          `防守${mult}x ${fort.padEnd(5)} | 堡壘 ${String(res.posts0).padStart(3)} | 涵蓋 ${(res.coverage * 100).toFixed(1)}% | 被奪格實際涵蓋 ${(res.effCoverage * 100).toFixed(1)}% | 失地 ${(res.lostFrac * 100).toFixed(1)}% | 每格損失 ${res.lossPerTile.toFixed(0)} | 結束 ${res.endReason} t=${res.ticks}`,
+        );
+      }
+    }
+    logLine("---- spacing 對照(進攻 1e8 實投,防守兵力不補充) ----");
+    for (const r of rows) logLine(r);
+  }, 3_600_000);
+
   test("report: one HTML page from every saved run", () => {
     const file = buildSiegeReport(
       path.join(DATA_DIR, "fortress-siege-report.html"),
