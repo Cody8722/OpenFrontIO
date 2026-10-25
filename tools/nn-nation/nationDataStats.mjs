@@ -1,5 +1,5 @@
 // Label counts of the collected nation decision data.
-//   node tests/util/nationDataStats.mjs [dir]   (default .nn-nation-data)
+//   node tools/nn-nation/nationDataStats.mjs [dir]   (default .nn-nation-data)
 import fs from "fs";
 import path from "path";
 

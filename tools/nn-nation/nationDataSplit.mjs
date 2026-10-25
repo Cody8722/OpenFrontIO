@@ -1,6 +1,6 @@
 // Label counts per opening and per map, the train/val/test split by gameID,
 // and the number of usable rows.
-//   node tests/util/nationDataSplit.mjs [dir]   (default .nn-nation-data)
+//   node tools/nn-nation/nationDataSplit.mjs [dir]   (default .nn-nation-data)
 // Writes <dir>/split.json ({ gameID: "train" | "val" | "test" }).
 //
 // Engage labels (rows that reached the engage decision):
