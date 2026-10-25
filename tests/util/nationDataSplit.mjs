@@ -5,8 +5,8 @@
 //
 // Engage labels (rows that reached the engage decision):
 //   below_reserve  troops under the reserve ratio: hold
-//   between        reserve reached, trigger not: the rules' 1-in-10 draw decides;
-//                  stays in the rule shell, not given to the network
+//   between        reserve reached, trigger not: a class of its own whatever the
+//                  rules' 1-in-10 draw gave; the draw stays in the rule shell
 //   both_passed    both ratios reached: attack
 // Target labels (rows that reached the strength block):
 //   <rule>                 the rule that attacked (with at least one candidate)
@@ -77,8 +77,7 @@ for (const g of games) {
       if (!r.reached) bump(g.gameID, "engage", "not_reached");
       else if (!r.hasReserve) bump(g.gameID, "engage", "below_reserve");
       else if (r.hasTrigger) bump(g.gameID, "engage", "both_passed");
-      else
-        bump(g.gameID, "engage", r.c10Pass ? "between(pass)" : "between(fail)");
+      else bump(g.gameID, "engage", "between"); // the draw result is not a label
     } else if (r.t === "t") {
       if (r.rule !== null) {
         bump(
@@ -125,7 +124,9 @@ console.log("\n== usable rows ==");
 for (const key of ["all", "train", "val", "test"]) {
   const t = tally[key === "all" ? "all" : "set"].get(key);
   const engage =
-    (t.get("engage:below_reserve") ?? 0) + (t.get("engage:both_passed") ?? 0);
+    (t.get("engage:below_reserve") ?? 0) +
+    (t.get("engage:between") ?? 0) +
+    (t.get("engage:both_passed") ?? 0);
   let target = 0;
   for (const [l, v] of t) {
     if (l.startsWith("target:") && l !== "target:none_zero_candidates") {
