@@ -82,6 +82,15 @@ export class SiegeConfig extends EngineConfig {
   /** After setup, stop every player from building (no cities, nukes or boats). */
   blockBuilds = false;
 
+  /** Diagnostic: nukes blow up a single tile, so they cannot destroy SAMs. */
+  tinyBlast = false;
+
+  nukeMagnitudes(unitType: UnitType) {
+    return this.tinyBlast
+      ? { inner: 1, outer: 1 }
+      : super.nukeMagnitudes(unitType);
+  }
+
   isUnitDisabled(unitType: UnitType): boolean {
     if (
       this.blockBuilds &&

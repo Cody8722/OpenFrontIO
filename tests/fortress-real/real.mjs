@@ -722,7 +722,13 @@ async function nations(durationS, difficulty) {
       const el = (Date.now() - t0) / 1000;
       if (el < next) continue;
       next += 10;
-      const s = await myState(page);
+      // My own player can be eliminated; the game view then goes away. Stop
+      // cleanly and keep what was sampled so far.
+      const s = await myState(page).catch(() => null);
+      if (s === null) {
+        log("遊戲已結束(我方被消滅或遊戲結算),停止取樣");
+        break;
+      }
       const tps = (
         (s.ticks - lastTick) /
         ((Date.now() - lastT) / 1000)
