@@ -40,6 +40,7 @@ import { NationStructureBehavior } from "./nation/NationStructureBehavior";
 import { NationWarshipBehavior } from "./nation/NationWarshipBehavior";
 import { SpawnExecution } from "./SpawnExecution";
 import { AiAttackBehavior } from "./utils/AiAttackBehavior";
+import type { AttackPolicy } from "./utils/AttackPolicy";
 
 export class NationExecution implements Execution {
   private active = true;
@@ -67,6 +68,8 @@ export class NationExecution implements Execution {
   constructor(
     private gameID: GameID,
     private nation: Nation, // Nation contains PlayerInfo with PlayerType.Nation
+    // Replaces the rules' attack decisions; not part of the snapshot
+    private attackPolicy?: AttackPolicy,
   ) {
     this.random = new PseudoRandom(
       simpleHash(nation.playerInfo.id) + simpleHash(gameID),
@@ -266,6 +269,9 @@ export class NationExecution implements Execution {
       this.emojiBehavior,
       this.warshipBehavior,
     );
+    if (this.attackPolicy !== undefined) {
+      this.attackBehavior.setPolicy(this.attackPolicy);
+    }
     this.nukeBehavior = new NationNukeBehavior(
       this.random,
       this.mg,

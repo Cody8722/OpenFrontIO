@@ -57,6 +57,7 @@ import {
 import type { NationWarshipBehavior } from "../nation/NationWarshipBehavior";
 import { TransportShipExecution } from "../TransportShipExecution";
 import { closestTwoTiles } from "../Util";
+import { AttackPolicy, RULE_ATTACK_POLICY } from "./AttackPolicy";
 
 // Reusable neighbor buffer for hot loops; the simulation is single-threaded.
 const NEIGHBOR_SCRATCH: TileRef[] = [0, 0, 0, 0];
@@ -85,6 +86,10 @@ export class AiAttackBehavior {
   // Only set during a maybeAttack call: our land neighbors, and each boat route planned
   private landNeighbors: Set<Player> | null = null;
   private boatRoutes: Map<Player, BoatRoute | null> | null = null;
+  // Not part of the snapshot, and absent on a restored shell: read through activePolicy()
+  private policy?: AttackPolicy;
+  // Set while a policy sends an attack with a share of the rules' base troops
+  private activeFraction?: number;
 
   constructor(
     private random: PseudoRandom,
@@ -97,6 +102,15 @@ export class AiAttackBehavior {
     private emojiBehavior?: NationEmojiBehavior,
     private warshipBehavior?: NationWarshipBehavior,
   ) {}
+
+  /** Swaps the decision policy; the default is the original rule set. */
+  setPolicy(policy: AttackPolicy): void {
+    this.policy = policy;
+  }
+
+  private activePolicy(): AttackPolicy {
+    return this.policy ?? RULE_ATTACK_POLICY;
+  }
 
   /** The owner supplies the shared PRNG, player and nation behaviors. */
   snapshot(w: SnapshotWriter): Versioned {
@@ -411,14 +425,20 @@ export class AiAttackBehavior {
       if (this.attackBots()) return;
     }
 
-    // Save up troops until we reach the reserve ratio
-    if (!this.hasReserveRatioTroops()) return;
-
-    // Medium: answer attacks without saving up to the trigger ratio first
-    if (difficulty === Difficulty.Medium && this.retaliate()) return;
-
-    // Maybe save up troops until we reach the trigger ratio
-    if (!this.hasTriggerRatioTroops() && !this.random.chance(10)) return;
+    // Reserve and trigger ratio checks: the policy decides whether to attack at all.
+    // Medium answers attacks between the two checks, without saving up to the trigger ratio.
+    const decision = this.activePolicy().engage({
+      troops: this.player.troops(),
+      maxTroops: this.game.config().maxTroops(this.player),
+      reserveRatio: this.reserveRatio,
+      triggerRatio: this.triggerRatio,
+      hasReserve: this.hasReserveRatioTroops(),
+      hasTrigger: this.hasTriggerRatioTroops(),
+      chance10: () => this.random.chance(10),
+      beforeTrigger:
+        difficulty === Difficulty.Medium ? () => this.retaliate() : null,
+    });
+    if (decision !== "attack") return;
 
     // Get attack strategies in priority order based on difficulty
     const strategies = this.getAttackStrategies(
@@ -607,8 +627,23 @@ export class AiAttackBehavior {
         return [bots, nuked, assist, betray, hated, afk, traitor, crown, weakest, island, donate];
       case Difficulty.Hard:
         // Strong veryWeak and juicy strats after the distracting hated strat, to make the nations weaker than impossible
-        // prettier-ignore
-        return [bots, assist, betray, nuked, traitor, afk, hated, veryWeak, juicy, victim, crown, weakest, island, donate];
+        // The strength-based block (hated .. island) is the policy's to order or replace
+        return [
+          bots,
+          assist,
+          betray,
+          nuked,
+          traitor,
+          afk,
+          ...this.activePolicy().strengthStrategies({
+            rules: { hated, veryWeak, juicy, victim, crown, weakest, island },
+            groups: targetGroups,
+            canReach: (target) => this.canReach(target),
+            attack: (target, fraction) =>
+              this.sendWithFraction(target, fraction),
+          }),
+          donate,
+        ];
       case Difficulty.Impossible:
         // prettier-ignore
         return [bots, veryWeak, betray, assist, victim, crown, traitor, juicy, afk, nuked, hated, weakest, island, donate];
@@ -1161,6 +1196,16 @@ export class AiAttackBehavior {
     );
   }
 
+  // sendAttack with fraction (0..1) of the base land attack amount. Boat attacks keep their own sizing.
+  private sendWithFraction(target: Player, fraction: number): boolean {
+    this.activeFraction = Math.min(1, Math.max(0, fraction));
+    try {
+      return this.sendAttack(target);
+    } finally {
+      this.activeFraction = undefined;
+    }
+  }
+
   sendAttack(target: Player | TerraNullius, force = false): boolean {
     if (!force && !this.shouldAttack(target)) return false;
 
@@ -1420,6 +1465,8 @@ export class AiAttackBehavior {
       );
     } else {
       troops = nonBotTroops(targetTroops);
+      // A policy sending part of the base amount; the caps below still apply
+      if (this.activeFraction !== undefined) troops *= this.activeFraction;
     }
 
     // Hard & Impossible: don't drop below neighbor troop threshold (also applies to TerraNullius/fallout).
