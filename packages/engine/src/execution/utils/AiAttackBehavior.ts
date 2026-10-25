@@ -156,6 +156,7 @@ export class AiAttackBehavior {
     const routes = new Map<Player, BoatRoute | null>();
     this.boatRoutes = routes;
     let landFront = false;
+    this.activePolicy().beginTurn?.();
     try {
       this.chooseAttack();
       for (const neighbor of this.landNeighbors ?? []) {
@@ -164,6 +165,7 @@ export class AiAttackBehavior {
     } finally {
       this.landNeighbors = null;
       this.boatRoutes = null;
+      this.activePolicy().endTurn?.();
     }
     this.clearBlockedLane(routes, landFront);
   }
@@ -326,6 +328,7 @@ export class AiAttackBehavior {
     this.game.addExecution(
       new TransportShipExecution(this.player, dst, troops),
     );
+    this.activePolicy().attackSent?.(owner, troops, "boat");
   }
 
   private findRandomBoatTarget(
@@ -638,7 +641,7 @@ export class AiAttackBehavior {
           ...this.activePolicy().strengthStrategies({
             rules: { hated, veryWeak, juicy, victim, crown, weakest, island },
             groups: targetGroups,
-            canReach: (target) => this.canReach(target),
+            canReach: (target) => this.canReachQuietly(target),
             attack: (target, fraction) =>
               this.sendWithFraction(target, fraction),
           }),
@@ -1315,6 +1318,11 @@ export class AiAttackBehavior {
         this.game.addExecution(
           new TransportShipExecution(this.player, tile, troops),
         );
+        this.activePolicy().attackSent?.(
+          this.game.terraNullius(),
+          troops,
+          "boat",
+        );
         return true;
       }
     }
@@ -1521,6 +1529,7 @@ export class AiAttackBehavior {
         target.isPlayer() ? target.id() : this.game.terraNullius().id(),
       ),
     );
+    this.activePolicy().attackSent?.(target, troops, "land");
     return true;
   }
 
@@ -1548,6 +1557,7 @@ export class AiAttackBehavior {
     this.game.addExecution(
       new TransportShipExecution(this.player, route.landing, troops),
     );
+    this.activePolicy().attackSent?.(target, troops, "boat");
     return true;
   }
 
@@ -1579,6 +1589,7 @@ export class AiAttackBehavior {
     this.game.addExecution(
       new TransportShipExecution(this.player, landing, boatTroops),
     );
+    this.activePolicy().attackSent?.(target, boatTroops, "boat");
     return true;
   }
 
@@ -1586,6 +1597,18 @@ export class AiAttackBehavior {
     return (
       this.landNeighbors?.has(target) ?? this.player.sharesBorderWith(target)
     );
+  }
+
+  // canReach for policies: leaves the planned-route cache alone, because the
+  // routes in it (the rules' picks) decide which blocked lanes get cleared afterwards
+  private canReachQuietly(target: Player): boolean {
+    const cache = this.boatRoutes;
+    this.boatRoutes = null;
+    try {
+      return this.canReach(target);
+    } finally {
+      this.boatRoutes = cache;
+    }
   }
 
   // By land, or by a boat that passes no hostile warship and isn't sailing too far

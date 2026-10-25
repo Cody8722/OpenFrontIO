@@ -1,3 +1,4 @@
+import type { TerraNullius } from "@openfront/engine-api/game/GameTypes";
 import { Player } from "../../game/Game";
 
 /**
@@ -5,6 +6,14 @@ import { Player } from "../../game/Game";
  * of AiAttackBehavior). RuleAttackPolicy is the original rule set; every
  * method must leave the nation's shared PRNG exactly as the rules would, or
  * games stop replaying tick for tick.
+ *
+ * RULE: any query made while deciding must not change the game state. That
+ * covers everything on the contexts (canReach, groups, ...) and everything a
+ * policy reads from the game itself: no PRNG draws, no cache writes the rules
+ * later act on, no spawned executions. A policy may look at as many players as
+ * it likes; the game must still play exactly as if it had not looked.
+ * tests/NationPolicyGuard.test.ts enforces this; any policy (a network too)
+ * must pass it.
  */
 
 /** Result of the engage decision: "hold" and "acted" both end the attack turn. */
@@ -42,7 +51,7 @@ export interface StrengthContext {
   rules: Record<StrengthStrategyName, () => boolean>;
   /** Target groups the rules try in order, each sorted by troops (ascending). */
   groups(): Player[][];
-  /** Whether a land or boat attack on target is possible right now. */
+  /** Whether a land or boat attack on target is possible right now; free of side effects. */
   canReach(target: Player): boolean;
   /**
    * Attacks target with fraction (0..1) of the rules' base amount; the
@@ -53,6 +62,16 @@ export interface StrengthContext {
 }
 
 export interface AttackPolicy {
+  /** Optional observers, for recording data; they must not touch the game or the PRNG. */
+  beginTurn?(): void;
+  /** An attack or transport ship left: land attacks and boats, in the order sent. */
+  attackSent?(
+    target: Player | TerraNullius,
+    troops: number,
+    kind: "land" | "boat",
+  ): void;
+  endTurn?(): void;
+
   /** Decision 1: attack this turn or not (reserve + trigger ratio checks). */
   engage(ctx: EngageContext): EngageDecision;
   /**

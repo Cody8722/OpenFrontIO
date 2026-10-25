@@ -24,6 +24,8 @@ export interface TraceSpec {
   gameID: string;
   difficulty: Difficulty;
   nations: number; // first N manifest nations
+  // test map (default "world") or a real game map under resources/maps
+  map?: string;
   ticks: number; // ticks after the spawn phase
   startingGold?: number;
   goldMultiplier?: number;
@@ -52,12 +54,30 @@ function fnv(h: number, v: number): number {
   return h;
 }
 
-export function loadWorldNations(count: number): Nation[] {
+// Real game maps are named as a path from tests/testdata/maps (what setup() joins)
+function mapRef(map: string): { setupName: string; manifest: string } {
+  const real = map.startsWith("real:");
+  const name = real ? map.slice(5) : map;
+  return real
+    ? {
+        setupName: `../../../resources/maps/${name}`,
+        manifest: path.join(
+          __dirname,
+          `../../resources/maps/${name}/manifest.json`,
+        ),
+      }
+    : {
+        setupName: name,
+        manifest: path.join(
+          __dirname,
+          `../testdata/maps/${name}/manifest.json`,
+        ),
+      };
+}
+
+export function loadWorldNations(count: number, map = "world"): Nation[] {
   const manifest = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, "../testdata/maps/world/manifest.json"),
-      "utf8",
-    ),
+    fs.readFileSync(mapRef(map).manifest, "utf8"),
   ) as MapManifest;
   const placed = manifest.nations.flatMap((n) =>
     n.coordinates === undefined ? [] : [{ name: n.name, at: n.coordinates }],
@@ -77,11 +97,11 @@ export async function traceWorld(
   spec: TraceSpec,
   onTick?: (game: Game, tick: number) => void,
   configClass: typeof EngineConfig = EngineConfig,
-  policy?: AttackPolicy,
+  policy?: AttackPolicy | ((nation: Nation, game: Game) => AttackPolicy),
 ): Promise<{ result: TraceResult; game: Game }> {
-  const nations = loadWorldNations(spec.nations);
+  const nations = loadWorldNations(spec.nations, spec.map);
   const game = await setup(
-    "world",
+    mapRef(spec.map ?? "world").setupName,
     {
       difficulty: spec.difficulty,
       startingGold: spec.startingGold,
@@ -94,7 +114,13 @@ export async function traceWorld(
     nations,
   );
   for (const n of game.nations()) {
-    game.addExecution(new NationExecution(spec.gameID, n, policy));
+    game.addExecution(
+      new NationExecution(
+        spec.gameID,
+        n,
+        typeof policy === "function" ? policy(n, game) : policy,
+      ),
+    );
   }
   // The spawn phase never ends by itself without humans: let the nations
   // place themselves, then end it by hand (as the snapshot tests do).
