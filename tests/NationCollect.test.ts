@@ -11,7 +11,11 @@ import { DecisionRecorder, RecorderMode, SCHEMA } from "./util/NationRecorder";
 import { TraceSpec, loadWorldNations, traceWorld } from "./util/NationTrace";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, "../.nn-nation-data");
+const ROOT = path.join(
+  __dirname,
+  "..",
+  process.env.NN_COLLECT_DIR ?? ".nn-nation-data",
+);
 const RAW = path.join(ROOT, "raw");
 const GAMES = path.join(ROOT, "games.jsonl");
 const BASELINE = path.join(__dirname, "testdata/nn-nation/baseline-trace.json");
@@ -175,7 +179,10 @@ describe.skipIf(!enabled)("nation decision collection", () => {
               .map((l) => JSON.parse(l).gameID)
           : [],
       );
-      const specs = plan(process.env.NN_COLLECT_PLAN ?? "pilot");
+      const only = process.env.NN_COLLECT_ONLY?.split(",");
+      const specs = plan(process.env.NN_COLLECT_PLAN ?? "pilot").filter(
+        (s) => only === undefined || only.includes(s.gameID),
+      );
       let n = 0;
       for (const spec of specs) {
         if (done.has(spec.gameID)) continue;
