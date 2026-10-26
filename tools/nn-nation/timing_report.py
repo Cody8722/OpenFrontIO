@@ -104,7 +104,10 @@ def regularity(game: dict) -> dict:
             hist[min(int(x * 10), 30)] += 1
     per_tick = np.array([tick_counts.get(k, 0) for k in range(lo, hi + 1)])
     return {
-        **{k: float(np.mean(v)) if v else float("nan") for k, v in per.items()},
+        **{
+            k: float(np.mean(per[k])) if per[k] else float("nan")
+            for k in ("phase", "multiple", "cv", "lag1", "mean_gap")
+        },
         "fano": float(per_tick.var() / per_tick.mean()),
         "max_simultaneous": int(per_tick.max()),
         "thinks_per_nation": float(np.mean(counts)),
