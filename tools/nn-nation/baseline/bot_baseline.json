@@ -1,0 +1,84 @@
+{
+ "rules": {
+  "turns_on_own_phase": 1.0,
+  "intervals_multiple_of_rate": 1.0,
+  "interval_multiples": {
+   "1": 0.7329528465008646,
+   "2": 0.10438253227421053,
+   "3": 0.06435341073076874,
+   "4": 0.029342555155423236,
+   "5": 0.06896865533873295
+  },
+  "attack_rate_min_max_mean": [
+   45,
+   59,
+   51.99936708860759
+  ],
+  "senders_per_tick_dist": {
+   "no sender": 0.7950142098109477,
+   "1": 0.17285617200049425,
+   "2": 0.027570122327937725,
+   "3+": 0.004559495860620289
+  },
+  "senders_per_tick_mean": 0.24249042382305697,
+  "senders_per_tick_fano": 1.119144756242931,
+  "max_simultaneous_senders": 7,
+  "same_choice_k1": 0.7368513942816802,
+  "same_choice_k1_adj": 0.7508917461634177,
+  "decisions_in_repeated_k1": 0.8324584545924334,
+  "same_choice_k2": 0.7649400247431553,
+  "same_choice_k2_adj": 0.7738018419663284,
+  "decisions_in_repeated_k2": 0.6548807354421085
+ },
+ "net": {
+  "turns_on_own_phase": 1.0,
+  "intervals_multiple_of_rate": 1.0,
+  "interval_multiples": {
+   "1": 0.7324927563076353,
+   "2": 0.10305227365942077,
+   "3": 0.06374449280922959,
+   "4": 0.03043012317584642,
+   "5": 0.07028035404786791
+  },
+  "attack_rate_min_max_mean": [
+   45,
+   59,
+   51.99936708860759
+  ],
+  "senders_per_tick_dist": {
+   "no sender": 0.7978981057001989,
+   "1": 0.17105848480729546,
+   "2": 0.026610401967205013,
+   "3+": 0.004433007525300579
+  },
+  "senders_per_tick_mean": 0.23836914750330546,
+  "senders_per_tick_fano": 1.1177906202580277,
+  "max_simultaneous_senders": 7,
+  "same_choice_k1": 0.7472646649815895,
+  "same_choice_k1_adj": 0.7615601986641548,
+  "decisions_in_repeated_k1": 0.8240272587381842,
+  "same_choice_k2": 0.8043313826187348,
+  "same_choice_k2_adj": 0.7858889704084128,
+  "decisions_in_repeated_k2": 0.6390415475928776
+ },
+ "decisions": {
+  "rules": {
+   "decisions": 37870,
+   "attacked at the first try": 16140,
+   "refused attempts": 26792,
+   "no candidate": 1103,
+   "every try refused": 13109,
+   "chose / found nothing to attack": 6749,
+   "attacked after a refusal": 769
+  },
+  "net": {
+   "decisions": 37390,
+   "attacked at the first try": 15910,
+   "refused attempts": 1110,
+   "no candidate": 998,
+   "chose / found nothing to attack": 19590,
+   "every try refused": 716,
+   "attacked after a refusal": 176
+  }
+ }
+}
