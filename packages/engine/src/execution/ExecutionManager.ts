@@ -22,6 +22,7 @@ import { EmbargoExecution } from "./EmbargoExecution";
 import { EmojiExecution } from "./EmojiExecution";
 import { MarkDisconnectedExecution } from "./MarkDisconnectedExecution";
 import { MoveWarshipExecution } from "./MoveWarshipExecution";
+import { devNationTiming } from "./nation/NationTiming";
 import { NationExecution } from "./NationExecution";
 import { NoOpExecution } from "./NoOpExecution";
 import { PauseExecution } from "./PauseExecution";
@@ -167,7 +168,9 @@ export class Executor {
   nationExecutions(): Execution[] {
     const execs: Execution[] = [];
     for (const nation of this.mg.nations()) {
-      execs.push(new NationExecution(this.gameID_, nation));
+      execs.push(
+        new NationExecution(this.gameID_, nation, undefined, devNationTiming()),
+      );
     }
     return execs;
   }

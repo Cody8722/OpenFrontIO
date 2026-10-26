@@ -37,6 +37,11 @@ import { NationEmojiBehavior } from "./nation/NationEmojiBehavior";
 import { NationMIRVBehavior } from "./nation/NationMIRVBehavior";
 import { NationNukeBehavior } from "./nation/NationNukeBehavior";
 import { NationStructureBehavior } from "./nation/NationStructureBehavior";
+import {
+  NationTiming,
+  NationTimingConfig,
+  TimingStateSchema,
+} from "./nation/NationTiming";
 import { NationWarshipBehavior } from "./nation/NationWarshipBehavior";
 import { SpawnExecution } from "./SpawnExecution";
 import { AiAttackBehavior } from "./utils/AiAttackBehavior";
@@ -59,6 +64,9 @@ export class NationExecution implements Execution {
 
   private attackRate: number;
   private attackTick: number;
+  // When the nation thinks, if not on the attackRate/attackTick lattice;
+  // undefined (the default) is the lattice itself
+  private timing?: NationTiming;
   private triggerRatio: number;
   private reserveRatio: number;
   private expandRatio: number;
@@ -70,6 +78,8 @@ export class NationExecution implements Execution {
     private nation: Nation, // Nation contains PlayerInfo with PlayerType.Nation
     // Replaces the rules' attack decisions; not part of the snapshot
     private attackPolicy?: AttackPolicy,
+    // Replaces the fixed attack lattice; its own random stream, state in the snapshot
+    timing?: NationTimingConfig,
   ) {
     this.random = new PseudoRandom(
       simpleHash(nation.playerInfo.id) + simpleHash(gameID),
@@ -77,6 +87,12 @@ export class NationExecution implements Execution {
     this.triggerRatio = this.random.nextInt(50, 60) / 100;
     this.reserveRatio = this.random.nextInt(30, 40) / 100;
     this.expandRatio = this.random.nextInt(10, 20) / 100;
+    if (timing !== undefined) {
+      this.timing = NationTiming.create(
+        timing,
+        simpleHash(nation.playerInfo.id) + simpleHash(gameID),
+      );
+    }
   }
 
   init(mg: Game) {
@@ -201,6 +217,11 @@ export class NationExecution implements Execution {
     this.attackBehavior.followUpLandings();
     this.nukeBehavior.followUpStrikes();
 
+    if (this.timing !== undefined) {
+      this.tickTimed(ticks, this.timing);
+      return;
+    }
+
     if (ticks % this.attackRate !== this.attackTick) {
       // Call handleStructures twice between regular attack ticks (at 1/3 and 2/3 of the interval)
       // Otherwise it is possible that we earn more gold than we can spend
@@ -225,6 +246,43 @@ export class NationExecution implements Execution {
     this.allianceBehavior.handleAllianceExtensionRequests();
     this.mirvBehavior.considerMIRV();
     this.structureBehavior.handleStructures();
+    this.warshipBehavior.maybeSpawnWarship();
+    this.handleEmbargoesToHostileNations();
+    this.attackBehavior.maybeAttack();
+    this.warshipBehavior.counterWarshipInfestation();
+    this.nukeBehavior.maybeSendNuke();
+  }
+
+  // The same turn as above, with the thinks on the timing's schedule. Building
+  // stays on the old lattice (at the attack tick and at 1/3 and 2/3 of the
+  // period), so the economy keeps its pace. With a spread of 0 this plays
+  // exactly like the lattice, tick for tick.
+  private tickTimed(ticks: number, timing: NationTiming): void {
+    const offset = ticks % this.attackRate;
+    const oneThird =
+      (this.attackTick + Math.floor(this.attackRate / 3)) % this.attackRate;
+    const twoThirds =
+      (this.attackTick + Math.floor((this.attackRate * 2) / 3)) %
+      this.attackRate;
+    const buildTick =
+      offset === this.attackTick || offset === oneThird || offset === twoThirds;
+    if (!timing.shouldThink(ticks, this.attackRate, this.attackTick)) {
+      if (buildTick && this.player !== null && this.player.isAlive()) {
+        this.structureBehavior.handleStructures();
+      }
+      return;
+    }
+    // A think on the lattice's own attack tick keeps the lattice's order, with
+    // building in the middle; elsewhere building (if due) goes first.
+    const inline = offset === this.attackTick;
+    if (!inline && buildTick) this.structureBehavior.handleStructures();
+
+    this.emojiBehavior.maybeSendCasualEmoji();
+    this.updateRelationsFromEmbargos();
+    this.allianceBehavior.handleAllianceRequests();
+    this.allianceBehavior.handleAllianceExtensionRequests();
+    this.mirvBehavior.considerMIRV();
+    if (inline) this.structureBehavior.handleStructures();
     this.warshipBehavior.maybeSpawnWarship();
     this.handleEmbargoesToHostileNations();
     this.attackBehavior.maybeAttack();
@@ -416,6 +474,7 @@ export class NationExecution implements Execution {
       expandRatio: this.expandRatio,
       embargoMalusApplied: [...this.embargoMalusApplied],
       spawnExecAdded: this.spawnExecAdded,
+      timing: this.timing === undefined ? null : this.timing.snapshot(w),
       behaviors: this.behaviorsInitialized
         ? {
             emoji: this.emojiBehavior.snapshot(w),
@@ -454,6 +513,8 @@ export class NationExecution implements Execution {
     this.expandRatio = s.expandRatio;
     this.embargoMalusApplied = new Set(s.embargoMalusApplied);
     this.spawnExecAdded = s.spawnExecAdded;
+    this.timing =
+      s.timing === null ? undefined : NationTiming.restore(s.timing, r);
     this.behaviorsInitialized = s.behaviors !== null;
     const b = s.behaviors;
     const player = this.player;
@@ -509,6 +570,7 @@ const NationStateSchema = z.object({
   expandRatio: zNum(),
   embargoMalusApplied: z.array(z.string()),
   spawnExecAdded: z.boolean(),
+  timing: TimingStateSchema.nullable(),
   behaviors: z
     .object({
       emoji: VersionedSchema,
@@ -525,7 +587,11 @@ type NationState = z.infer<typeof NationStateSchema>;
 
 export const NationExecutionSnapshot = execSnapshotType({
   name: "Nation",
-  version: 1,
+  version: 2,
   schema: NationStateSchema,
+  migrations: {
+    // v1 nations always thought on the attackRate/attackTick lattice
+    1: (d) => ({ ...d, timing: null }),
+  },
   cls: () => NationExecution,
 });

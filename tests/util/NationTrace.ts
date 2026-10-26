@@ -9,6 +9,7 @@ import {
 } from "@openfront/engine-api/game/GameTypes";
 import { MapManifest } from "@openfront/engine-api/game/MapFiles";
 import { EngineConfig } from "@openfront/engine/configuration/EngineConfig";
+import type { NationTimingConfig } from "@openfront/engine/execution/nation/NationTiming";
 import { NationExecution } from "@openfront/engine/execution/NationExecution";
 import type { AttackPolicy } from "@openfront/engine/execution/utils/AttackPolicy";
 import { Game } from "@openfront/engine/game/Game";
@@ -98,7 +99,14 @@ export async function traceWorld(
   onTick?: (game: Game, tick: number) => void,
   configClass: typeof EngineConfig = EngineConfig,
   policy?: AttackPolicy | ((nation: Nation, game: Game) => AttackPolicy),
-): Promise<{ result: TraceResult; game: Game }> {
+  timing?:
+    | NationTimingConfig
+    | ((nation: Nation) => NationTimingConfig | undefined),
+): Promise<{
+  result: TraceResult;
+  game: Game;
+  executions: NationExecution[];
+}> {
   const nations = loadWorldNations(spec.nations, spec.map);
   const game = await setup(
     mapRef(spec.map ?? "world").setupName,
@@ -113,14 +121,16 @@ export async function traceWorld(
     false,
     nations,
   );
+  const executions: NationExecution[] = [];
   for (const n of game.nations()) {
-    game.addExecution(
-      new NationExecution(
-        spec.gameID,
-        n,
-        typeof policy === "function" ? policy(n, game) : policy,
-      ),
+    const exec = new NationExecution(
+      spec.gameID,
+      n,
+      typeof policy === "function" ? policy(n, game) : policy,
+      typeof timing === "function" ? timing(n) : timing,
     );
+    executions.push(exec);
+    game.addExecution(exec);
   }
   // The spawn phase never ends by itself without humans: let the nations
   // place themselves, then end it by hand (as the snapshot tests do).
@@ -163,5 +173,15 @@ export async function traceWorld(
       finalTiles,
     },
     game,
+    executions,
   };
+}
+
+/** A nation's attack lattice (private to the engine), for the logs. */
+export function schedule(exec: NationExecution): {
+  attackRate: number;
+  attackTick: number;
+} {
+  const e = exec as unknown as { attackRate: number; attackTick: number };
+  return { attackRate: e.attackRate, attackTick: e.attackTick };
 }

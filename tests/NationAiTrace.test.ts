@@ -69,8 +69,15 @@ describe.skipIf(!enabled)("nation AI trace (tick-level equivalence)", () => {
       async () => {
         const cap = Number(process.env.NN_TRACE_TICKS ?? 0);
         const t0 = Date.now();
+        // NN_TRACE_SPREAD=0 plays the scenarios through the nation timing path:
+        // with no jitter it must still equal the baseline tick for tick
+        const spread = process.env.NN_TRACE_SPREAD;
         const { result } = await traceWorld(
           cap > 0 ? { ...spec, ticks: Math.min(spec.ticks, cap) } : spec,
+          undefined,
+          undefined,
+          undefined,
+          spread === undefined ? undefined : { spread: Number(spread) },
         );
         process.stderr.write(
           `[trace] ${spec.label} ${result.ticks} ticks ${Date.now() - t0} ms ` +
