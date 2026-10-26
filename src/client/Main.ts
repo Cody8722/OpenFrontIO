@@ -58,6 +58,7 @@ import {
   isDesktopShell,
   type DesktopUpdateState,
 } from "./DesktopShell";
+import { captureDevSearch } from "./DevNationTiming";
 import "./FeaturedStream";
 import { loadGameClient, prefetchGameClient } from "./GameClientLoader";
 import "./GameModeSelector";
@@ -2235,6 +2236,11 @@ class Client {
 
 // Initialize the client when the DOM is loaded
 const bootstrap = () => {
+  // Before anything can rewrite the address bar: the dev switches
+  // (?nationTiming=, &nationTimingLog=) are read from the URL the page was
+  // loaded at, long before the game worker starts. See DevNationTiming.ts.
+  captureDevSearch(window.location.search, () => ClientEnv.env());
+
   // First, so the error hooks are in place for everything below. No-op
   // without a collector URL (see Telemetry.ts); never awaited.
   void initTelemetry();

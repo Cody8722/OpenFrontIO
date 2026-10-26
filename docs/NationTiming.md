@@ -24,10 +24,14 @@
 
 | 層 | 做的事 |
 |---|---|
-| 頁面 `src/client/DevNationTiming.ts` | 讀 `?nationTiming=`;**僅單人局、僅開發環境(`GameEnv.Dev`)、僅 [0,1) 的數字**才算請求 |
+| 頁面 `src/client/DevNationTiming.ts` | 讀 `?nationTiming=`;**僅單人局、僅開發環境(`GameEnv.Dev`)、僅 [0,1) 的數字**才算請求。讀的是**頁面載入時**擷取的網址(見下) |
 | 協定 `InitMessage` | 只加一個選填欄位 `nationTiming?: number` |
 | 工作執行緒 `Worker.worker.ts` | `init` 時呼叫 `configureDevNationTiming(gameType, nationTiming)`:僅單人局接受,其餘一律清除 |
 | 引擎 `Executor.nationExecutions()` | 建國時把設定交給每個 `NationExecution` |
+
+### 為什麼要在載入時擷取網址
+
+遊戲開始時網址會被改寫(單人局 `history.replaceState(null, "", "/")`,加入的遊戲變成 `/w0/game/<id>`),query 已不在。而 `WorkerClient` 隨遊戲客戶端區塊在加入遊戲時才動態載入(`Main` → `GameClientLoader` → `ClientGameRunner` → `WorkerClient`),所以在 `WorkerClient` 讀 `location.search` 永遠讀不到。做法同 `PagePin.ts`:`Main.bootstrap` 最前面呼叫 `captureDevSearch()`,在任何 history 寫入之前把 query 存起來;`WorkerClient` 改讀 `devSearch()`。擷取時只在開發環境、且 query 含 `nationTiming` 才記錄,其餘一律記成空字串。
 
 安全限制與對應測試:
 
@@ -47,5 +51,6 @@
 與 `?nationTiming=` 同樣只限單人局 + 開發環境,可單獨使用(不帶 `nationTiming` 時記錄舊格點的醒來,可拿來對照)。協定再加一個選填欄位 `InitMessage.nationTimingLog?: boolean`。
 
 - 做法:在國家的攻擊政策外包一層「原樣轉手」的裝飾器(`NationTimingLog.ts`),只讀 `ticks()` 與引擎已經給的純值;不查詢遊戲、不抽亂數、不碰 boatRoutes 快取。沒帶參數時完全不建立。
+- 開始那行會標「參數來源=載入時網址」(有 `nationTiming` 值)或「參數來源=無」,看到前者就表示頁面載入時的網址參數確實送到了 worker。
 - 輸出(前綴 `[NationTiming]`):開始一行;每次醒來一行(刻、國家名、距上次醒來的間隔、結果:發動攻擊/門檻沒過/抽籤沒過/沒有目標/未進入判斷);每 3000 刻一行統計(自上次統計起的間隔平均、標準差、最小、最大;同刻醒來的最大值與平均值,平均只計有國家醒來的刻)。
 - 測試:`tests/NationTimingLog.test.ts`(開關日誌 hash chain 完全一致,舊格點與 spread 0.5 各一;開關限制;輸出格式與統計數字)。

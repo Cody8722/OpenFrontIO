@@ -107,8 +107,8 @@ describe("nation timing log: switch", () => {
     setDevNationTiming({ spread: 0.5 });
     new Executor(game, "log-start", undefined).nationExecutions();
     expect(lines).toEqual([
-      "[NationTiming] 開始 nationTiming=未生效(舊格點) 國家數=6",
-      "[NationTiming] 開始 nationTiming=生效 spread=0.50 國家數=6",
+      "[NationTiming] 開始 nationTiming=未生效(舊格點) 參數來源=無 國家數=6",
+      "[NationTiming] 開始 nationTiming=生效 spread=0.50 參數來源=載入時網址 國家數=6",
     ]);
   });
 });

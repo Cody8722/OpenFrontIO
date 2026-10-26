@@ -26,7 +26,11 @@ import {
 } from "@openfront/shared/GameMapLoader";
 import { generateID } from "@openfront/shared/SharedUtil";
 import { ClientEnv } from "./ClientEnv";
-import { nationTimingLogRequest, nationTimingRequest } from "./DevNationTiming";
+import {
+  devSearch,
+  nationTimingLogRequest,
+  nationTimingRequest,
+} from "./DevNationTiming";
 import { terrainMapFileLoader } from "./TerrainMapFileLoader";
 
 // Inlined as a same-origin Blob (Vite's `?worker&inline`), sidestepping the
@@ -130,13 +134,15 @@ export class WorkerClient {
         clientID: this.clientID,
         map,
         snapshot: this.snapshotToRestore,
+        // From the query string captured at page load: the address bar has
+        // been rewritten by now (see DevNationTiming.captureDevSearch).
         nationTiming: nationTimingRequest(
-          globalThis.location?.search ?? "",
+          devSearch(),
           this.gameStartInfo.config.gameType,
           () => ClientEnv.env(),
         ),
         nationTimingLog: nationTimingLogRequest(
-          globalThis.location?.search ?? "",
+          devSearch(),
           this.gameStartInfo.config.gameType,
           () => ClientEnv.env(),
         ),

@@ -65,7 +65,13 @@ export class NationTimingLogger {
       spread === undefined
         ? "未生效(舊格點)"
         : `生效 spread=${spread.toFixed(2)}`;
-    this.sink(`${PREFIX} 開始 nationTiming=${timing} 國家數=${nations}`);
+    // The worker has no page, so it cannot tell where the value came from; the
+    // only way the switch is ever set is the init message, which the page
+    // fills from the query string captured at load (client/DevNationTiming.ts).
+    const source = spread === undefined ? "無" : "載入時網址";
+    this.sink(
+      `${PREFIX} 開始 nationTiming=${timing} 參數來源=${source} 國家數=${nations}`,
+    );
   }
 
   /** A nation wakes into its attack decision. Returns the gap since its last wake. */

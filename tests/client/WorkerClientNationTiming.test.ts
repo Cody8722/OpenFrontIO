@@ -9,6 +9,7 @@ import {
 } from "@openfront/engine-api/game/GameTypes";
 import type { GameStartInfo } from "@openfront/engine-api/Schemas";
 import { GameEnv } from "@openfront/shared/configuration/Env";
+import { captureDevSearch } from "../../src/client/DevNationTiming";
 import { WorkerClient } from "../../src/client/WorkerClient";
 
 const worker = vi.hoisted(() => ({
@@ -66,7 +67,12 @@ async function initMessage(
   worker.posted = [];
   worker.listeners = [];
   env.value = gameEnv;
+  // Load the page with the query, let Main take it, then rewrite the address
+  // bar the way a game start does: the query is gone when WorkerClient runs.
   window.history.replaceState({}, "", `/${search}`);
+  captureDevSearch(window.location.search, () => env.value);
+  window.history.replaceState(null, "", "/w0/game/timingWire1");
+  expect(window.location.search).toBe("");
   const ready = new WorkerClient(startInfo(gameType), undefined).initialize();
   await vi.waitFor(() => expect(worker.posted).toHaveLength(1));
   const msg = worker.posted[0];
