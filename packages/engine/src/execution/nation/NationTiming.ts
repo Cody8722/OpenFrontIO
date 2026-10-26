@@ -1,3 +1,4 @@
+import { GameType } from "@openfront/engine-api/game/GameTypes";
 import { PseudoRandom } from "@openfront/engine-lib/PseudoRandom";
 import {
   zInt,
@@ -16,6 +17,11 @@ import type {
  */
 export interface NationTimingConfig {
   /**
+   * A per-nation trait, not a global setting: like triggerRatio and
+   * reserveRatio it belongs to the one nation, is kept in that nation's
+   * snapshot state and may differ between nations of the same game (the mixed
+   * games of the evidence runs do exactly that).
+   *
    * Half-width of the jitter as a fraction of the nation's attackRate, 0 <= s
    * < 1. Gaps are triangular on [(1 - s) R, (1 + s) R] with mean R, so the
    * long-run think frequency is the old one. 0 is the old metronome exactly.
@@ -103,6 +109,27 @@ let devTiming: NationTimingConfig | undefined;
 
 export function setDevNationTiming(config: NationTimingConfig | undefined) {
   devTiming = config;
+}
+
+/**
+ * What the worker does with the page's request (`?nationTiming=` in dev):
+ * only a single-player game takes it, and only a valid spread. Anything else
+ * clears the switch, so a worker never keeps a value from an earlier game and
+ * a multiplayer room (lockstep: every client must run the same thing) ignores
+ * the request entirely.
+ */
+export function configureDevNationTiming(
+  gameType: GameType,
+  spread: number | undefined,
+): void {
+  const valid =
+    spread !== undefined &&
+    Number.isFinite(spread) &&
+    spread >= 0 &&
+    spread < 1;
+  setDevNationTiming(
+    gameType === GameType.Singleplayer && valid ? { spread } : undefined,
+  );
 }
 
 export function devNationTiming(): NationTimingConfig | undefined {

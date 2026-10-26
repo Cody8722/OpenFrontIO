@@ -19,6 +19,7 @@ import {
   TransportShipSpawnResultMessage,
   WorkerMessage,
 } from "@openfront/engine-api/worker/WorkerMessages";
+import { configureDevNationTiming } from "../execution/nation/NationTiming";
 import {
   createGameRunner,
   createGameRunnerFromSnapshot,
@@ -163,6 +164,11 @@ async function onMessage(e: MessageEvent<MainThreadMessage>) {
       break;
     case "init":
       try {
+        // Set (or cleared) before the runner builds the game's nations.
+        configureDevNationTiming(
+          message.gameStartInfo.config.gameType,
+          message.nationTiming,
+        );
         gameRunner = (
           message.snapshot !== undefined
             ? createGameRunnerFromSnapshot(

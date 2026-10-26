@@ -25,6 +25,8 @@ import {
   mapFilesTransfer,
 } from "@openfront/shared/GameMapLoader";
 import { generateID } from "@openfront/shared/SharedUtil";
+import { ClientEnv } from "./ClientEnv";
+import { nationTimingRequest } from "./DevNationTiming";
 import { terrainMapFileLoader } from "./TerrainMapFileLoader";
 
 // Inlined as a same-origin Blob (Vite's `?worker&inline`), sidestepping the
@@ -128,6 +130,11 @@ export class WorkerClient {
         clientID: this.clientID,
         map,
         snapshot: this.snapshotToRestore,
+        nationTiming: nationTimingRequest(
+          globalThis.location?.search ?? "",
+          this.gameStartInfo.config.gameType,
+          () => ClientEnv.env(),
+        ),
       };
       worker.postMessage(init, mapFilesTransfer(map));
 

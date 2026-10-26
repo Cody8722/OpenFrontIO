@@ -59,6 +59,12 @@ export interface InitMessage extends BaseWorkerMessage {
   map: MapFiles;
   /** Resume from this game snapshot instead of starting a new game. */
   snapshot?: Uint8Array;
+  /**
+   * Dev only: ask for jittered nation think timing (spread in [0, 1)). The
+   * engine takes it in single-player games only and ignores it otherwise;
+   * the page sends it only outside production. See NationTiming.
+   */
+  nationTiming?: number;
 }
 
 /**
