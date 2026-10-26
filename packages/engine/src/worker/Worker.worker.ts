@@ -20,6 +20,7 @@ import {
   WorkerMessage,
 } from "@openfront/engine-api/worker/WorkerMessages";
 import { configureDevNationTiming } from "../execution/nation/NationTiming";
+import { configureDevNationTimingLog } from "../execution/nation/NationTimingLog";
 import {
   createGameRunner,
   createGameRunnerFromSnapshot,
@@ -168,6 +169,10 @@ async function onMessage(e: MessageEvent<MainThreadMessage>) {
         configureDevNationTiming(
           message.gameStartInfo.config.gameType,
           message.nationTiming,
+        );
+        configureDevNationTimingLog(
+          message.gameStartInfo.config.gameType,
+          message.nationTimingLog,
         );
         gameRunner = (
           message.snapshot !== undefined

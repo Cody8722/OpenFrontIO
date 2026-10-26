@@ -22,3 +22,20 @@ export function nationTimingRequest(
   if (!Number.isFinite(spread) || spread < 0 || spread >= 1) return undefined;
   return env() === GameEnv.Dev ? spread : undefined;
 }
+
+/**
+ * `&nationTimingLog=1`: print the nations' wake-ups to the console. The same
+ * limits as above: single-player and dev builds only, and only the value 1.
+ * Absent or anything else, it returns undefined and nothing is sent.
+ */
+export function nationTimingLogRequest(
+  search: string,
+  gameType: GameType,
+  env: () => GameEnv,
+): true | undefined {
+  if (gameType !== GameType.Singleplayer) return undefined;
+  if (new URLSearchParams(search).get("nationTimingLog") !== "1") {
+    return undefined;
+  }
+  return env() === GameEnv.Dev ? true : undefined;
+}

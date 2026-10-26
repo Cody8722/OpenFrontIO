@@ -41,3 +41,11 @@
 ## 證據
 
 見 `tools/nn-nation/baseline/timing_phaseA.md`(第一輪報告)與 `timing_followup.md`(兵力三法與軍艦劑量反應)。階段 B(事件觸發)與長尾變體尚未實作。
+
+## 診斷日誌:`&nationTimingLog=1`
+
+與 `?nationTiming=` 同樣只限單人局 + 開發環境,可單獨使用(不帶 `nationTiming` 時記錄舊格點的醒來,可拿來對照)。協定再加一個選填欄位 `InitMessage.nationTimingLog?: boolean`。
+
+- 做法:在國家的攻擊政策外包一層「原樣轉手」的裝飾器(`NationTimingLog.ts`),只讀 `ticks()` 與引擎已經給的純值;不查詢遊戲、不抽亂數、不碰 boatRoutes 快取。沒帶參數時完全不建立。
+- 輸出(前綴 `[NationTiming]`):開始一行;每次醒來一行(刻、國家名、距上次醒來的間隔、結果:發動攻擊/門檻沒過/抽籤沒過/沒有目標/未進入判斷);每 3000 刻一行統計(自上次統計起的間隔平均、標準差、最小、最大;同刻醒來的最大值與平均值,平均只計有國家醒來的刻)。
+- 測試:`tests/NationTimingLog.test.ts`(開關日誌 hash chain 完全一致,舊格點與 spread 0.5 各一;開關限制;輸出格式與統計數字)。

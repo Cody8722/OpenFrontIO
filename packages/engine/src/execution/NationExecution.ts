@@ -42,10 +42,11 @@ import {
   NationTimingConfig,
   TimingStateSchema,
 } from "./nation/NationTiming";
+import { devNationTimingLogger } from "./nation/NationTimingLog";
 import { NationWarshipBehavior } from "./nation/NationWarshipBehavior";
 import { SpawnExecution } from "./SpawnExecution";
 import { AiAttackBehavior } from "./utils/AiAttackBehavior";
-import type { AttackPolicy } from "./utils/AttackPolicy";
+import { RULE_ATTACK_POLICY, type AttackPolicy } from "./utils/AttackPolicy";
 
 export class NationExecution implements Execution {
   private active = true;
@@ -327,8 +328,20 @@ export class NationExecution implements Execution {
       this.emojiBehavior,
       this.warshipBehavior,
     );
-    if (this.attackPolicy !== undefined) {
-      this.attackBehavior.setPolicy(this.attackPolicy);
+    // Dev log of the wake-ups (off unless the page asked): a pass-through
+    // decorator around whatever policy decides, the rules by default.
+    const log = devNationTimingLogger();
+    const policy =
+      log === undefined
+        ? this.attackPolicy
+        : log.wrap(
+            this.attackPolicy ?? RULE_ATTACK_POLICY,
+            this.mg,
+            this.nation.playerInfo.id,
+            this.nation.playerInfo.name,
+          );
+    if (policy !== undefined) {
+      this.attackBehavior.setPolicy(policy);
     }
     this.nukeBehavior = new NationNukeBehavior(
       this.random,

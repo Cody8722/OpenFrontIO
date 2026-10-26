@@ -114,3 +114,31 @@ describe("WorkerClient nationTiming init field", () => {
     expect(msg.nationTiming).toBeUndefined();
   });
 });
+
+describe("WorkerClient nationTimingLog init field", () => {
+  test("single-player on a dev build with =1 sends true", async () => {
+    const msg = await initMessage(
+      "?nationTimingLog=1",
+      GameType.Singleplayer,
+      GameEnv.Dev,
+    );
+    expect(msg.nationTimingLog).toBe(true);
+  });
+
+  test("a multiplayer room, staging and production never send it", async () => {
+    for (const [type, gameEnv] of [
+      [GameType.Public, GameEnv.Dev],
+      [GameType.Private, GameEnv.Dev],
+      [GameType.Singleplayer, GameEnv.Preprod],
+      [GameType.Singleplayer, GameEnv.Prod],
+    ] as const) {
+      const msg = await initMessage("?nationTimingLog=1", type, gameEnv);
+      expect(msg.nationTimingLog).toBeUndefined();
+    }
+  });
+
+  test("without the parameter the field is absent", async () => {
+    const msg = await initMessage("", GameType.Singleplayer, GameEnv.Dev);
+    expect(msg.nationTimingLog).toBeUndefined();
+  });
+});

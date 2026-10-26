@@ -65,6 +65,11 @@ export interface InitMessage extends BaseWorkerMessage {
    * the page sends it only outside production. See NationTiming.
    */
   nationTiming?: number;
+  /**
+   * Dev only: log nation wake-ups to the worker console (`[NationTiming]`).
+   * Single-player only, like nationTiming; reads the game, never changes it.
+   */
+  nationTimingLog?: boolean;
 }
 
 /**

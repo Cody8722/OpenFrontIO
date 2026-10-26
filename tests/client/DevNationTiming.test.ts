@@ -7,7 +7,10 @@
 // the wiring into the init message is in tests/client/WorkerClientNationTiming.test.ts.
 import { GameType } from "@openfront/engine-api/game/GameTypes";
 import { GameEnv } from "@openfront/shared/configuration/Env";
-import { nationTimingRequest } from "../../src/client/DevNationTiming";
+import {
+  nationTimingLogRequest,
+  nationTimingRequest,
+} from "../../src/client/DevNationTiming";
 
 const dev = () => GameEnv.Dev;
 
@@ -66,4 +69,51 @@ describe("nationTimingRequest", () => {
       ).toBe(undefined);
     },
   );
+});
+
+describe("nationTimingLogRequest", () => {
+  test("a single-player game on a dev build with =1 asks for the log", () => {
+    expect(
+      nationTimingLogRequest(
+        "?nationTiming=0.5&nationTimingLog=1",
+        GameType.Singleplayer,
+        dev,
+      ),
+    ).toBe(true);
+  });
+
+  test.each([GameType.Public, GameType.Private])(
+    "a %s room ignores it",
+    (gameType) => {
+      expect(nationTimingLogRequest("?nationTimingLog=1", gameType, dev)).toBe(
+        undefined,
+      );
+    },
+  );
+
+  test.each([GameEnv.Preprod, GameEnv.Prod])(
+    "a build with env %s ignores it",
+    (env) => {
+      expect(
+        nationTimingLogRequest(
+          "?nationTimingLog=1",
+          GameType.Singleplayer,
+          () => env,
+        ),
+      ).toBe(undefined);
+    },
+  );
+
+  test.each([
+    "",
+    "?nationTimingLog",
+    "?nationTimingLog=0",
+    "?nationTimingLog=true",
+  ])("%j is no request, and the environment is not asked", (search) => {
+    const env = vi.fn(dev);
+    expect(nationTimingLogRequest(search, GameType.Singleplayer, env)).toBe(
+      undefined,
+    );
+    expect(env).not.toHaveBeenCalled();
+  });
 });
