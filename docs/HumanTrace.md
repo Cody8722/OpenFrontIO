@@ -47,6 +47,7 @@ every 2 s while the game runs.
 | `intent` | `tMs`, `tick`, `serverTick` (the turn it goes into), `type`, full `params`, `outcome` (`sent` or `dropped_paused`), `state` (gold, troops, tiles, unit counts by type) |
 | `turn` | a turn that carried intents: number, count, types (confirms the intents came back from the local server) |
 | `sync` | every 50 turns: turn number and game tick |
+| `event` | `tMs`, `tick`, `ev` and fields per kind (see "Event stream") |
 | `camera` | scale and centre, at most 4 per second, only on change |
 | `winner`, `end` | markers |
 
@@ -121,6 +122,46 @@ The 100 ms floor is the turn interval; the rest is processing. The first row
 is the software renderer starving the page and says nothing about a machine
 with a GPU: `summarize` prints `turnTiming` for any trace, so read it from a
 real session.
+
+## Event stream
+
+`{"k":"event","ev":…}` lines for events that concern the local player, taken
+from what the client already receives. One observation point was added: the
+page calls the recorder once per game update, right after the view took the
+update in (`ClientGameRunner`, next to `gameView.update`). It only reads the
+update batch and GameView getters, so the worker, the turns and the hash chain
+are not touched.
+
+| `ev` | source | fields | status |
+|---|---|---|---|
+| `attacked` | the player's incoming-attack list (what the attack panel shows; the event feed has no message for an attack) | `from` (id, name, type), `troops`, `attackId` | verified in a browser |
+| `transport_inbound` | `UnitIncoming` "naval invasion" alert for me | `from`, `troops`, `at`, `landing` (the boat's target tile, when the view has it) | unit test only |
+| `transport_near` | a tracked boat within 25 tiles of its landing tile | `distance`, `at`, `landing` | unit test only |
+| `transport_ended` | the tracked boat became inactive (landed, sunk or retreated; the view cannot tell which) | `at`, `troops` | unit test only |
+| `unit_destroyed` | feed message for my warship or transport boat | `unit`, `at` (last position), `killer: null` | unit test only |
+| `trade_ship_captured` | feed message, I am the former owner | `by` (captor's name), `at` | unit test only |
+| `nuke_launched` | a new nuke/MIRV unit that is not mine, aimed on my land or within 40 tiles of it | `unit`, `from`, `launchedAt`, `target`, `onMyTerritory`, `distanceToMine` | unit test only |
+| `alliance_request_received/sent`, `alliance_formed`, `alliance_rejected`, `alliance_broken`, `alliance_expired` | alliance updates that involve me | players involved, `iBetrayed` | received and rejected verified in a browser |
+
+Cannot be done from what the client receives:
+
+- **Who destroyed my unit.** The destroyer is kept inside the engine and is in
+  no update; `killer` is always `null`. Only warships and transport boats have
+  a feed message at all; a lost structure leaves none.
+- **Where a boat will land, always.** `landing` is read from the unit's target
+  tile when the view carries it; if it is absent the field is missing.
+- **Boat outcome.** `transport_ended` does not say landed, sunk or retreated.
+- **Nuke "near" is a coarse test** (a grid of 8-tile steps up to 40 tiles), not
+  an exact distance.
+- **An exact "attack on me" message.** It is derived from the incoming list, so
+  attacks the panel hides (bots are filtered there, not here) are recorded here.
+
+`summarize` adds "Events and operations": for the focus unit's batches, the
+event types seen in the 60 s before each batch (counts, and mean batch size
+with and without each event type), and how gold relates to batch size
+(Pearson r of gold at the batch start, the gold change since the previous
+batch start, and the gap since the previous batch end, against batch size). A
+trace recorded before the event stream existed just reports no event lines.
 
 ## Analysis
 

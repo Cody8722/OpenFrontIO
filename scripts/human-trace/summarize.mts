@@ -610,6 +610,113 @@ const located: Located[] = buildsAll.map((b) => ({ ...b }));
   (summary as Row).chartData = chart;
 }
 
+// Events against the focus unit's batches: which events came in the 60 s
+// before each batch, and how gold and batch size relate between batches.
+{
+  const WINDOW_MS = 60_000;
+  const events = rows.filter((r) => r.k === "event" && num(r.tMs));
+  const list: Row[] = summary.focusUnit.batchList;
+  const overall: Record<string, number> = {};
+  let withAny = 0;
+  const perBatch = list.map((b) => {
+    const seen: Record<string, number> = {};
+    for (const e of events) {
+      if (e.tMs >= b.startMs - WINDOW_MS && e.tMs < b.startMs) {
+        seen[e.ev] = (seen[e.ev] ?? 0) + 1;
+      }
+    }
+    if (Object.keys(seen).length > 0) withAny++;
+    for (const [k, v] of Object.entries(seen))
+      overall[k] = (overall[k] ?? 0) + v;
+    return { id: b.id, startMs: b.startMs, count: b.count, events: seen };
+  });
+  const eventTotals: Record<string, number> = {};
+  for (const e of events) eventTotals[e.ev] = (eventTotals[e.ev] ?? 0) + 1;
+  // Per event type: batches that had it in their window, and how big they were.
+  const byType: Record<string, Row> = {};
+  for (const t of Object.keys(eventTotals)) {
+    const yes = perBatch.filter((p) => (p.events[t] ?? 0) > 0);
+    const no = perBatch.filter((p) => (p.events[t] ?? 0) === 0);
+    const mean = (xs: { count: number }[]) =>
+      xs.length ? r1(xs.reduce((a, p) => a + p.count, 0) / xs.length) : null;
+    byType[t] = {
+      batchesWithEventBefore: yes.length,
+      meanBatchSizeWith: mean(yes),
+      meanBatchSizeWithout: mean(no),
+    };
+  }
+  // Gold between batches (net of everything else bought in between).
+  const corr = (xs: number[], ys: number[]): number | null => {
+    const n = xs.length;
+    if (n < 3) return null;
+    const mx = xs.reduce((a, b) => a + b, 0) / n;
+    const my = ys.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0;
+    let sxx = 0;
+    let syy = 0;
+    for (let i = 0; i < n; i++) {
+      sxy += (xs[i] - mx) * (ys[i] - my);
+      sxx += (xs[i] - mx) ** 2;
+      syy += (ys[i] - my) ** 2;
+    }
+    return sxx > 0 && syy > 0
+      ? Math.round((sxy / Math.sqrt(sxx * syy)) * 1000) / 1000
+      : null;
+  };
+  const gold = list.map((b, i) => {
+    const prev = list[i - 1];
+    const gain =
+      prev && num(b.goldAtStart) && num(prev.goldAtStart)
+        ? b.goldAtStart - prev.goldAtStart
+        : null;
+    return {
+      id: b.id,
+      count: b.count,
+      goldAtStart: b.goldAtStart,
+      goldChangeSincePrevBatchStart: gain,
+      gapSincePrevBatchEndMs: prev ? r1(b.startMs - prev.endMs) : null,
+    };
+  });
+  const pairs = (f: (g: (typeof gold)[number]) => unknown) => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const g of gold) {
+      const v = f(g);
+      if (num(v)) {
+        xs.push(v);
+        ys.push(g.count);
+      }
+    }
+    return corr(xs, ys);
+  };
+  summary.eventsVsBatches = {
+    unit: focusUnit,
+    windowMs: WINDOW_MS,
+    eventLinesInTrace: events.length,
+    eventTotals,
+    batchesWithAnyEventBefore: withAny,
+    batches: list.length,
+    eventsBeforeBatches: overall,
+    byEventType: byType,
+    perBatch,
+    gold: {
+      correlationWithBatchSize: {
+        goldAtStart: pairs((g) => g.goldAtStart),
+        goldChangeSincePrevBatchStart: pairs(
+          (g) => g.goldChangeSincePrevBatchStart,
+        ),
+        gapSincePrevBatchEndMs: pairs((g) => g.gapSincePrevBatchEndMs),
+      },
+      perBatch: gold,
+      note: "Pearson r over batches; goldChange is the net change between the two batch starts, so it includes everything bought in between. Small samples: read as a hint, not a result.",
+    },
+    note:
+      events.length === 0
+        ? "no event lines in this trace (recorded before the event stream existed)"
+        : "events are those the client received that concern the player",
+  };
+}
+
 // Clicks that built nothing, per selected unit type. A click only counts as
 // answered when a build of that same unit (or an upgrade) followed it.
 {
@@ -726,6 +833,13 @@ const md = [
       `| ${b.id} | ${b.startMs} | ${b.count} | ${b.ratePerSecond} | ${b.distinctTiles} | ${b.sameTileShare} | ${b.holdingsAtStart} | ${b.goldAtStart} | ${b.nearestPortDistance} |`,
   ),
   "",
+  `## Events and operations (${summary.eventsVsBatches.windowMs / 1000} s before each ${summary.eventsVsBatches.unit} batch)`,
+  "",
+  ...block({
+    ...summary.eventsVsBatches,
+    perBatch: undefined,
+    gold: { ...summary.eventsVsBatches.gold, perBatch: undefined },
+  }),
   "## Blocked clicks by unit type (inferred)",
   "",
   ...block(summary.blockedByUnit),

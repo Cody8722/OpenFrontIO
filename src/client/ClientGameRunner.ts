@@ -934,7 +934,7 @@ export class ClientGameRunner {
 
   private lastTickReceiveTime: number = 0;
   private currentTickDelay: number | undefined = undefined;
-  private stopHumanTraceHook: (() => void) | undefined;
+  private humanTraceHook: { stop: () => void; tick: () => void } | undefined;
 
   constructor(
     private lobby: LobbyConfig,
@@ -1015,7 +1015,7 @@ export class ClientGameRunner {
     this.renderer.initialize();
     this.input.initialize();
     // Dev-only input recording (&humanTrace=); a no-op unless asked for.
-    this.stopHumanTraceHook = attachHumanTraceToGame({
+    this.humanTraceHook = attachHumanTraceToGame({
       game: this.gameView as never,
       transform: this.renderer.transformHandler as never,
       uiState: this.renderer.uiState as never,
@@ -1040,6 +1040,7 @@ export class ClientGameRunner {
         this.eventBus.emit(new SendHashEvent(hu.tick, hu.hash));
       });
       this.gameView.update(gu);
+      this.humanTraceHook?.tick(); // dev-only recording; reads the view only
       this.webglBuilder?.update(this.gameView);
       this.renderer.tick();
       if (gu.tickExecutionDuration !== undefined) {
@@ -1216,8 +1217,8 @@ export class ClientGameRunner {
     if (!this.isActive) return;
 
     this.isActive = false;
-    this.stopHumanTraceHook?.();
-    this.stopHumanTraceHook = undefined;
+    this.humanTraceHook?.stop();
+    this.humanTraceHook = undefined;
     this.metrics?.stop();
     this.worker.cleanup();
     this.transport.leaveGame();

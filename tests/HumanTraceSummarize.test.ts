@@ -190,6 +190,45 @@ describe("summarize.mts", () => {
     expect(chart.holdings.length).toBeGreaterThan(0);
   });
 
+  it("counts events in the 60 s before each batch and relates gold to batch size", async () => {
+    const rows: object[] = [{ k: "header", gameID: "evt00002" }];
+    const ship = (tMs: number, tile: number, gold: number) => ({
+      k: "intent",
+      type: "build_unit",
+      tMs,
+      serverTick: 1,
+      outcome: "sent",
+      params: { type: "build_unit", unit: "Warship", tile },
+      state: { gold, units: { Warship: 0 } },
+    });
+    // batch 1 (2 ships) at 100 s, batch 2 (4 ships) at 200 s, batch 3 (6) at 300 s
+    for (const [i, n] of [2, 4, 6].entries()) {
+      for (let j = 0; j < n; j++)
+        rows.push(ship(100000 * (i + 1) + j * 500, 1, 1000 * (i + 1)));
+    }
+    rows.push({ k: "event", ev: "attacked", tMs: 150000 }); // 50 s before batch 2
+    rows.push({ k: "event", ev: "attacked", tMs: 20000 }); // 80 s before batch 1: outside
+    rows.push({ k: "event", ev: "nuke_launched", tMs: 290000 }); // before batch 3
+    const f = path.join(dir, "evt00002.jsonl");
+    await fs.writeFile(f, rows.map((r) => JSON.stringify(r)).join("\n"));
+    run(f);
+    const s = await summary("evt00002");
+    const e = s.eventsVsBatches;
+    expect(e.eventTotals).toEqual({ attacked: 2, nuke_launched: 1 });
+    expect(e.perBatch.map((p: any) => p.events)).toEqual([
+      {},
+      { attacked: 1 },
+      { nuke_launched: 1 },
+    ]);
+    expect(e.batchesWithAnyEventBefore).toBe(2);
+    expect(e.byEventType.attacked).toMatchObject({
+      batchesWithEventBefore: 1,
+      meanBatchSizeWith: 4,
+    });
+    // more gold, bigger batch: a perfect line
+    expect(e.gold.correlationWithBatchSize.goldAtStart).toBe(1);
+  });
+
   it("exits with usage when given nothing", () => {
     expect(() =>
       execFileSync(process.execPath, ["scripts/human-trace/summarize.mts"], {

@@ -1,4 +1,5 @@
-import { GameType } from "@openfront/engine-api/game/GameTypes";
+import { GameType, MessageType } from "@openfront/engine-api/game/GameTypes";
+import { GameUpdateType } from "@openfront/engine-api/game/GameUpdates";
 import type { GameStartInfo } from "@openfront/engine-api/Schemas";
 import { ClientEnv } from "../ClientEnv";
 import { devSearch } from "../DevNationTiming";
@@ -8,6 +9,7 @@ import {
   setActiveHumanTrace,
   type TraceContext,
 } from "./HumanTrace";
+import { createEventObserver, type EventGame } from "./HumanTraceEvents";
 import { attachInputHook, gameContext, type HookEnv } from "./HumanTraceHook";
 import {
   downloadFromBrowser,
@@ -86,7 +88,7 @@ export function attachHumanTraceToGame(parts: {
     screenToWorldCoordinates(x: number, y: number): { x: number; y: number };
   };
   uiState: { ghostStructure: string | null };
-}): (() => void) | undefined {
+}): { stop: () => void; tick: () => void } | undefined {
   try {
     const trace = activeHumanTrace();
     if (trace === undefined) return undefined;
@@ -113,7 +115,23 @@ export function attachHumanTraceToGame(parts: {
       },
       ghost: () => parts.uiState.ghostStructure,
     };
-    return attachInputHook(trace, env);
+    const stop = attachInputHook(trace, env);
+    // Called by the page once per game update, after the view took it in.
+    const tick = createEventObserver(
+      trace,
+      parts.game as unknown as EventGame,
+      {
+        Unit: GameUpdateType.Unit,
+        DisplayEvent: GameUpdateType.DisplayEvent,
+        UnitIncoming: GameUpdateType.UnitIncoming,
+        AllianceRequest: GameUpdateType.AllianceRequest,
+        AllianceRequestReply: GameUpdateType.AllianceRequestReply,
+        BrokeAlliance: GameUpdateType.BrokeAlliance,
+        AllianceExpired: GameUpdateType.AllianceExpired,
+        NAVAL_INVASION_INBOUND: MessageType.NAVAL_INVASION_INBOUND,
+      },
+    );
+    return { stop, tick };
   } catch {
     return undefined;
   }
