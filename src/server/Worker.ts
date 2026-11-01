@@ -55,6 +55,7 @@ import { registerPlayerProfileRoute } from "./PlayerProfileRoute";
 import { resolveVerifiedJoin } from "./Privilege";
 
 import { loadGatekeeper } from "./Gatekeeper";
+import { registerHumanTraceRoutes } from "./HumanTraceRoute";
 import { MapPlaylist } from "./MapPlaylist";
 import { setNoStoreHeaders } from "./NoStoreHeaders";
 import { PrivilegeRefresher } from "./PrivilegeRefresher";
@@ -499,6 +500,12 @@ export async function startWorker() {
     );
     res.status(204).end();
   });
+
+  // Dev only: Human Trace recordings (see HumanTraceRoute.ts). Never mounted
+  // on a staging or production server.
+  if (ServerEnv.env() === GameEnv.Dev) {
+    registerHumanTraceRoutes(app);
+  }
 
   app.get("/api/game/:id/exists", async (req, res) => {
     const lobbyId = req.params.id;

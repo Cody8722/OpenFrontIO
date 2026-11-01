@@ -16,6 +16,7 @@
     "tests/**/*",
     "src/scripts",
     "scripts/replay",
+    "scripts/human-trace",
     "scripts/split-packages",
     "vite.config.ts"
   ],

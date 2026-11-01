@@ -38,3 +38,6 @@ map-generator/map-generator.exe
 
 .nn-nation-data/
 .nn-nation-data*/
+
+# Human Trace (dev-only input recordings)
+.human-trace/

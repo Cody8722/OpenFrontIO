@@ -24,6 +24,12 @@ import { z } from "zod";
 import { getApiBase } from "./Api";
 import { getAuthHeader, getPersistentID } from "./Auth";
 import { LobbyConfig } from "./ClientGameRunner";
+import type { HumanTrace } from "./humanTrace/HumanTrace";
+import { setActiveHumanTrace } from "./humanTrace/HumanTrace";
+import {
+  beginHumanTrace,
+  showTraceDownload,
+} from "./humanTrace/HumanTraceStart";
 import {
   GameSpeedDownIntentEvent,
   GameSpeedUpIntentEvent,
@@ -68,6 +74,9 @@ export class LocalServer {
 
   private turnsExecuted = 0;
   private turnStartTime = 0;
+
+  // Dev-only recording (&humanTrace=); it only watches what passes through.
+  private trace: HumanTrace | undefined;
 
   private turnCheckInterval: NodeJS.Timeout;
   private stopHeartbeat: (() => void) | null = null;
@@ -136,6 +145,9 @@ export class LocalServer {
     }
 
     this.startedAt = Date.now();
+    if (!this.isReplay) {
+      this.trace = beginHumanTrace(this.lobbyConfig.gameStartInfo);
+    }
     this.clientConnect();
     if (this.lobbyConfig.gameRecord) {
       this.replayTurns = decompressGameRecord(
@@ -185,6 +197,7 @@ export class LocalServer {
         clientID: this.clientID!,
       };
       if (stampedIntent.type === "toggle_pause") {
+        this.trace?.intent(clientMsg.intent, this.turns.length, "sent");
         if (stampedIntent.paused) {
           // Pausing: add intent and end turn before pause takes effect
           this.intents.push(stampedIntent);
@@ -200,9 +213,17 @@ export class LocalServer {
       }
       // Don't process non-pause intents during replays or while paused
       if (this.lobbyConfig.gameRecord || this.paused) {
+        if (!this.lobbyConfig.gameRecord) {
+          this.trace?.intent(
+            clientMsg.intent,
+            this.turns.length,
+            "dropped_paused",
+          );
+        }
         return;
       }
 
+      this.trace?.intent(clientMsg.intent, this.turns.length, "sent");
       this.intents.push(stampedIntent);
     }
     if (clientMsg.type === "hash") {
@@ -245,6 +266,11 @@ export class LocalServer {
     if (clientMsg.type === "winner") {
       this.winner = clientMsg;
       this.allPlayersStats = clientMsg.allPlayersStats;
+      if (this.trace !== undefined) {
+        this.trace.event("winner");
+        void this.trace.flush();
+        void showTraceDownload(this.lobbyConfig.gameStartInfo?.gameID ?? "");
+      }
       if (!this.isReplay) {
         // Archive as soon as the game is decided: endGame() only runs during
         // page teardown, where the auth refresh and upload race document
@@ -278,6 +304,7 @@ export class LocalServer {
     };
     this.turns.push(pastTurn);
     this.intents = [];
+    this.trace?.turn(pastTurn);
     this.clientMessage({
       type: "turn",
       turn: pastTurn,
@@ -289,6 +316,11 @@ export class LocalServer {
     clearInterval(this.turnCheckInterval);
     this.stopHeartbeat?.();
     this.stopHeartbeat = null;
+    if (this.trace !== undefined) {
+      void this.trace.end();
+      setActiveHumanTrace(undefined);
+      this.trace = undefined;
+    }
     if (this.isReplay) {
       return;
     }

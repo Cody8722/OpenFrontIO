@@ -20,7 +20,7 @@ export function captureDevSearch(
   env: () => GameEnv,
 ): void {
   captured = "";
-  if (!search || !/nationTiming/.test(search)) return;
+  if (!search || !/nationTiming|humanTrace/.test(search)) return;
   try {
     if (env() === GameEnv.Dev) captured = search;
   } catch {

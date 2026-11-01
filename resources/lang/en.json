@@ -1003,6 +1003,9 @@
   "game_list": {
     "stats": "Stats"
   },
+  "human_trace": {
+    "download": "Download input trace (dev)"
+  },
   "game_mode": {
     "ffa": "Free for All",
     "hvn": "Humans vs Nations",

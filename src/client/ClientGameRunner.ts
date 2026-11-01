@@ -33,6 +33,7 @@ import { isDesktopShell } from "./DesktopShell";
 import { GameMetrics } from "./GameMetrics";
 import { createRenderer, GameRenderer } from "./hud/GameRenderer";
 import { goldRateTracker } from "./hud/layers/lib/GoldRateTracker";
+import { attachHumanTraceToGame } from "./humanTrace/HumanTraceStart";
 import { showInGameAlert } from "./InGameModal";
 import {
   AutoUpgradeEvent,
@@ -933,6 +934,7 @@ export class ClientGameRunner {
 
   private lastTickReceiveTime: number = 0;
   private currentTickDelay: number | undefined = undefined;
+  private stopHumanTraceHook: (() => void) | undefined;
 
   constructor(
     private lobby: LobbyConfig,
@@ -1012,6 +1014,12 @@ export class ClientGameRunner {
 
     this.renderer.initialize();
     this.input.initialize();
+    // Dev-only input recording (&humanTrace=); a no-op unless asked for.
+    this.stopHumanTraceHook = attachHumanTraceToGame({
+      game: this.gameView as never,
+      transform: this.renderer.transformHandler as never,
+      uiState: this.renderer.uiState as never,
+    });
     this.worker.start((gu: GameUpdateViewData | ErrorUpdate) => {
       if (this.lobby.gameStartInfo === undefined) {
         throw new Error("missing gameStartInfo");
@@ -1208,6 +1216,8 @@ export class ClientGameRunner {
     if (!this.isActive) return;
 
     this.isActive = false;
+    this.stopHumanTraceHook?.();
+    this.stopHumanTraceHook = undefined;
     this.metrics?.stop();
     this.worker.cleanup();
     this.transport.leaveGame();
