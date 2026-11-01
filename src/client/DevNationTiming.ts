@@ -58,17 +58,18 @@ export function nationTimingRequest(
 
 /**
  * `&nationTimingLog=1`: print the nations' wake-ups to the console. The same
- * limits as above: single-player and dev builds only, and only the value 1.
+ * limits as above: single-player and dev builds only. The value 1 prints
+ * every wake; `stats` prints only the start line and the periodic statistics.
  * Absent or anything else, it returns undefined and nothing is sent.
  */
 export function nationTimingLogRequest(
   search: string,
   gameType: GameType,
   env: () => GameEnv,
-): true | undefined {
+): true | "stats" | undefined {
   if (gameType !== GameType.Singleplayer) return undefined;
-  if (new URLSearchParams(search).get("nationTimingLog") !== "1") {
-    return undefined;
-  }
-  return env() === GameEnv.Dev ? true : undefined;
+  const raw = new URLSearchParams(search).get("nationTimingLog");
+  if (raw !== "1" && raw !== "stats") return undefined;
+  if (env() !== GameEnv.Dev) return undefined;
+  return raw === "stats" ? "stats" : true;
 }

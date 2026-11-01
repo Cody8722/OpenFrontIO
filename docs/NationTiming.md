@@ -48,7 +48,12 @@
 
 ## 診斷日誌:`&nationTimingLog=1`
 
-與 `?nationTiming=` 同樣只限單人局 + 開發環境,可單獨使用(不帶 `nationTiming` 時記錄舊格點的醒來,可拿來對照)。協定再加一個選填欄位 `InitMessage.nationTimingLog?: boolean`。
+與 `?nationTiming=` 同樣只限單人局 + 開發環境,可單獨使用(不帶 `nationTiming` 時記錄舊格點的醒來,可拿來對照)。協定再加一個選填欄位 `InitMessage.nationTimingLog?: boolean | "stats"`。
+
+- `&nationTimingLog=1`:開始行、每次醒來一行、統計行。
+- `&nationTimingLog=stats`:**只印開始行與統計行**,不印逐次醒來,長時間觀察用。
+- 開始行多了「難度=…」與「基準間隔R 最小/最大/平均」(全體國家)。R 要等國家 `init` 後才知道,所以開始行在**最後一個國家 init 時**(遊戲第一刻)才印,而不是建國當下。
+- 統計行多了「存活國家=」(印出當下 Nation 類玩家中還活著的數量)與「醒來國家數=」(本窗口內有醒來過的不同國家數)。存活數取自印出的那一刻,也就是窗口邊界之後第一次有國家醒來的刻。
 
 - 做法:在國家的攻擊政策外包一層「原樣轉手」的裝飾器(`NationTimingLog.ts`),只讀 `ticks()` 與引擎已經給的純值;不查詢遊戲、不抽亂數、不碰 boatRoutes 快取。沒帶參數時完全不建立。
 - 開始那行會標「參數來源=載入時網址」(有 `nationTiming` 值)或「參數來源=無」,看到前者就表示頁面載入時的網址參數確實送到了 worker。

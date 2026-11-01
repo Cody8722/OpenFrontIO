@@ -68,8 +68,9 @@ export interface InitMessage extends BaseWorkerMessage {
   /**
    * Dev only: log nation wake-ups to the worker console (`[NationTiming]`).
    * Single-player only, like nationTiming; reads the game, never changes it.
+   * "stats" prints only the start line and the periodic statistics.
    */
-  nationTimingLog?: boolean;
+  nationTimingLog?: boolean | "stats";
 }
 
 /**

@@ -131,6 +131,27 @@ describe("WorkerClient nationTimingLog init field", () => {
     expect(msg.nationTimingLog).toBe(true);
   });
 
+  test('=stats sends "stats", but not in a room or outside dev', async () => {
+    const ok = await initMessage(
+      "?nationTimingLog=stats",
+      GameType.Singleplayer,
+      GameEnv.Dev,
+    );
+    expect(ok.nationTimingLog).toBe("stats");
+    const room = await initMessage(
+      "?nationTimingLog=stats",
+      GameType.Public,
+      GameEnv.Dev,
+    );
+    expect(room.nationTimingLog).toBeUndefined();
+    const prod = await initMessage(
+      "?nationTimingLog=stats",
+      GameType.Singleplayer,
+      GameEnv.Prod,
+    );
+    expect(prod.nationTimingLog).toBeUndefined();
+  });
+
   test("a multiplayer room, staging and production never send it", async () => {
     for (const [type, gameEnv] of [
       [GameType.Public, GameEnv.Dev],

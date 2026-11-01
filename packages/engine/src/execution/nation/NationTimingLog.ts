@@ -1,4 +1,4 @@
-import { GameType } from "@openfront/engine-api/game/GameTypes";
+import { GameType, PlayerType } from "@openfront/engine-api/game/GameTypes";
 import type { TerraNullius } from "@openfront/engine-api/game/GameTypes";
 import type { Game, Player } from "../../game/Game";
 import type {
@@ -21,6 +21,23 @@ const REPORT_EVERY = 3000;
 
 export type LogSink = (line: string) => void;
 
+/** What the log reads of the game: plain values, taken when a line is printed. */
+export interface LogWorld {
+  difficulty: string;
+  aliveNations(): number;
+}
+
+export function worldOf(game: Game): LogWorld {
+  return {
+    get difficulty() {
+      return String(game.config().gameConfig().difficulty);
+    },
+    // players() is the living ones; read-only, no cache behind it.
+    aliveNations: () =>
+      game.players().filter((p) => p.type() === PlayerType.Nation).length,
+  };
+}
+
 export type WakeOutcome =
   | "發動攻擊"
   | "門檻沒過"
@@ -38,9 +55,12 @@ interface Stats {
   busyTicks: number;
   wakes: number;
   maxSimultaneous: number;
+  /** The distinct nations that woke in the window. */
+  woke: Set<string>;
 }
 
 const emptyStats = (): Stats => ({
+  woke: new Set(),
   n: 0,
   sum: 0,
   sumSq: 0,
@@ -58,24 +78,67 @@ export class NationTimingLogger {
   private curCount = 0;
   private nextReport = REPORT_EVERY;
 
-  constructor(private sink: LogSink) {}
+  private pending?: { spread: number | undefined; nations: number };
+  private rates: number[] = [];
 
-  start(spread: number | undefined, nations: number): void {
+  /** `verbose` false is the stats-only mode: no line per wake. */
+  constructor(
+    private sink: LogSink,
+    private verbose = true,
+    private world?: LogWorld,
+  ) {}
+
+  /**
+   * The start line needs every nation's base interval R, which a nation only
+   * has once it is initialised (after this call), so the line is printed when
+   * the last of `nations` has reported its R (`nationReady`), or at the first
+   * wake if some never did.
+   */
+  start(spread: number | undefined, nations: number, world?: LogWorld): void {
+    this.pending = { spread, nations };
+    this.rates = [];
+    if (world !== undefined) this.world = world;
+    if (nations === 0) this.printStart();
+  }
+
+  /** A nation was initialised with this base interval R (ticks). */
+  nationReady(rate: number): void {
+    this.rates.push(rate);
+    if (
+      this.pending !== undefined &&
+      this.rates.length >= this.pending.nations
+    ) {
+      this.printStart();
+    }
+  }
+
+  private printStart(): void {
+    const p = this.pending;
+    if (p === undefined) return;
+    this.pending = undefined;
     const timing =
-      spread === undefined
+      p.spread === undefined
         ? "未生效(舊格點)"
-        : `生效 spread=${spread.toFixed(2)}`;
+        : `生效 spread=${p.spread.toFixed(2)}`;
     // The worker has no page, so it cannot tell where the value came from; the
     // only way the switch is ever set is the init message, which the page
     // fills from the query string captured at load (client/DevNationTiming.ts).
-    const source = spread === undefined ? "無" : "載入時網址";
+    const source = p.spread === undefined ? "無" : "載入時網址";
+    const r = this.rates;
+    const rText =
+      r.length === 0
+        ? "最小=- 最大=- 平均=-"
+        : `最小=${Math.min(...r)} 最大=${Math.max(...r)} ` +
+          `平均=${(r.reduce((a, b) => a + b, 0) / r.length).toFixed(1)}`;
     this.sink(
-      `${PREFIX} 開始 nationTiming=${timing} 參數來源=${source} 國家數=${nations}`,
+      `${PREFIX} 開始 nationTiming=${timing} 參數來源=${source} ` +
+        `難度=${this.world?.difficulty ?? "-"} 基準間隔R ${rText} 國家數=${p.nations}`,
     );
   }
 
   /** A nation wakes into its attack decision. Returns the gap since its last wake. */
   wake(tick: number, id: string): number | null {
+    if (this.pending !== undefined) this.printStart();
     if (tick !== this.curTick) this.closeTick();
     // The wake that crosses the boundary belongs to the next window.
     if (tick >= this.nextReport) {
@@ -84,6 +147,7 @@ export class NationTimingLogger {
     }
     this.curTick = tick;
     this.curCount++;
+    this.win.woke.add(id);
     const last = this.lastWake.get(id);
     this.lastWake.set(id, tick);
     if (last === undefined) return null;
@@ -98,6 +162,7 @@ export class NationTimingLogger {
   }
 
   line(tick: number, name: string, gap: number | null, outcome: WakeOutcome) {
+    if (!this.verbose) return;
     const g = gap === null ? "首次" : `${gap}刻`;
     this.sink(`${PREFIX} t=${tick} ${name} 間隔=${g} 結果=${outcome}`);
   }
@@ -108,6 +173,8 @@ export class NationTimingLogger {
     id: string,
     name: string,
   ): AttackPolicy {
+    // Whoever builds the nations, the log gets to see the game they live in.
+    this.world ??= worldOf(game);
     return new LoggedAttackPolicy(inner, this, game, id, name);
   }
 
@@ -128,7 +195,9 @@ export class NationTimingLogger {
       w.n === 0 ? 0 : Math.sqrt(Math.max(0, w.sumSq / w.n - mean * mean));
     const sim = w.busyTicks === 0 ? 0 : w.wakes / w.busyTicks;
     this.sink(
-      `${PREFIX} 統計 t<${boundary}(自上次統計起) 醒來間隔 n=${w.n} ` +
+      `${PREFIX} 統計 t<${boundary}(自上次統計起) ` +
+        `存活國家=${this.world?.aliveNations() ?? "-"} 醒來國家數=${w.woke.size} ` +
+        `醒來間隔 n=${w.n} ` +
         `平均=${mean.toFixed(1)} 標準差=${sd.toFixed(1)} ` +
         `最小=${w.n === 0 ? "-" : w.min} 最大=${w.n === 0 ? "-" : w.max} | ` +
         `同刻醒來 最大=${w.maxSimultaneous} 平均=${sim.toFixed(2)}(只計有國家醒來的刻)`,
@@ -212,11 +281,12 @@ const consoleSink: LogSink = (line) => console.info(line);
  */
 export function configureDevNationTimingLog(
   gameType: GameType,
-  enabled: boolean | undefined,
+  enabled: boolean | "stats" | undefined,
   sink: LogSink = consoleSink,
 ): void {
   active =
-    gameType === GameType.Singleplayer && enabled === true
-      ? new NationTimingLogger(sink)
+    gameType === GameType.Singleplayer &&
+    (enabled === true || enabled === "stats")
+      ? new NationTimingLogger(sink, enabled !== "stats")
       : undefined;
 }

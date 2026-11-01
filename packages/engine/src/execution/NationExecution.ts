@@ -100,6 +100,8 @@ export class NationExecution implements Execution {
     this.mg = mg;
     this.attackRate = this.getAttackRate();
     this.attackTick = this.random.nextInt(0, this.attackRate);
+    // Dev log only: tell it this nation's base interval R (a plain number).
+    devNationTimingLogger()?.nationReady(this.attackRate);
 
     if (!this.mg.hasPlayer(this.nation.playerInfo.id)) {
       this.player = this.mg.addPlayer(this.nation.playerInfo);

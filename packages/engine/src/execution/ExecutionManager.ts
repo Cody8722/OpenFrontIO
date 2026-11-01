@@ -23,7 +23,7 @@ import { EmojiExecution } from "./EmojiExecution";
 import { MarkDisconnectedExecution } from "./MarkDisconnectedExecution";
 import { MoveWarshipExecution } from "./MoveWarshipExecution";
 import { devNationTiming } from "./nation/NationTiming";
-import { devNationTimingLogger } from "./nation/NationTimingLog";
+import { devNationTimingLogger, worldOf } from "./nation/NationTimingLog";
 import { NationExecution } from "./NationExecution";
 import { NoOpExecution } from "./NoOpExecution";
 import { PauseExecution } from "./PauseExecution";
@@ -173,7 +173,10 @@ export class Executor {
         new NationExecution(this.gameID_, nation, undefined, devNationTiming()),
       );
     }
-    devNationTimingLogger()?.start(devNationTiming()?.spread, execs.length);
+    const log = devNationTimingLogger();
+    if (log !== undefined) {
+      log.start(devNationTiming()?.spread, execs.length, worldOf(this.mg));
+    }
     return execs;
   }
 }

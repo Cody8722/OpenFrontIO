@@ -160,6 +160,30 @@ describe("nationTimingLogRequest", () => {
     ).toBe(true);
   });
 
+  test("=stats asks for the statistics-only log, in the same places only", () => {
+    expect(
+      nationTimingLogRequest(
+        "?nationTimingLog=stats",
+        GameType.Singleplayer,
+        dev,
+      ),
+    ).toBe("stats");
+    for (const gameType of [GameType.Public, GameType.Private]) {
+      expect(
+        nationTimingLogRequest("?nationTimingLog=stats", gameType, dev),
+      ).toBe(undefined);
+    }
+    for (const env of [GameEnv.Preprod, GameEnv.Prod]) {
+      expect(
+        nationTimingLogRequest(
+          "?nationTimingLog=stats",
+          GameType.Singleplayer,
+          () => env,
+        ),
+      ).toBe(undefined);
+    }
+  });
+
   test.each([GameType.Public, GameType.Private])(
     "a %s room ignores it",
     (gameType) => {
