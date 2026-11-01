@@ -132,6 +132,64 @@ describe("summarize.mts", () => {
     expect(s.turnTiming.turns).toBe(11);
   });
 
+  it("splits builds and blocked clicks by unit, batches the focus unit, writes chart data", async () => {
+    const rows: object[] = [{ k: "header", gameID: "bat00001" }];
+    const build = (tMs: number, unit: string, tile: number, n: number) => ({
+      k: "intent",
+      type: "build_unit",
+      tMs,
+      serverTick: 1,
+      outcome: "sent",
+      params: { type: "build_unit", unit, tile },
+      state: { gold: 1000, units: { Warship: n } },
+    });
+    // a port, then batch A: 5 clicks on one tile 500 ms apart; a 5 s pause;
+    // batch B: 2 clicks on two tiles
+    rows.push(build(100, "Port", 0, 0));
+    for (let i = 0; i < 5; i++)
+      rows.push(build(1000 + i * 500, "Warship", 7, i));
+    rows.push(build(10000, "Warship", 8, 5));
+    rows.push(build(10800, "Warship", 9, 6));
+    // a click with Port selected and no build after it
+    rows.push({
+      k: "input",
+      type: "pointerup",
+      button: 0,
+      tMs: 20000,
+      world: { x: 1, y: 1 },
+      selected: "Port",
+    });
+    const f = path.join(dir, "bat00001.jsonl");
+    await fs.writeFile(f, rows.map((r) => JSON.stringify(r)).join("\n"));
+    run(f);
+    const s = await summary("bat00001");
+    expect(s.buildByUnit).toEqual({ Port: 1, Warship: 7 });
+    expect(s.focusUnit.batches).toBe(2);
+    expect(s.focusUnit.batchList[0]).toMatchObject({
+      count: 5,
+      distinctTiles: 1,
+      singleTile: true,
+      sameTileShare: 1,
+      ratePerSecond: 2,
+      holdingsAtStart: 0,
+    });
+    expect(s.focusUnit.batchList[1].distinctTiles).toBe(2);
+    expect(s.focusUnit.batchesOfFiveOrMore).toMatchObject({
+      batches: 1,
+      singleTile: 1,
+    });
+    expect(s.focusUnit.maxHoldings).toBe(6);
+    expect(s.blockedByUnit.byUnit.Port).toMatchObject({
+      clicks: 1,
+      blocked: 1,
+    });
+    const chart = JSON.parse(
+      await fs.readFile(path.join(dir, "bat00001.chart.json"), "utf8"),
+    );
+    expect(chart.batches).toHaveLength(2);
+    expect(chart.holdings.length).toBeGreaterThan(0);
+  });
+
   it("exits with usage when given nothing", () => {
     expect(() =>
       execFileSync(process.execPath, ["scripts/human-trace/summarize.mts"], {

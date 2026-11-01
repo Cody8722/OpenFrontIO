@@ -137,6 +137,18 @@ intents, build positions (8×8 grid, ring shape), inferred blocked clicks,
 confirmation latency through the turn stream, turn timing, tick offset. Bad
 lines are counted and skipped; a missing or truncated record is salvaged.
 
+Per-unit sections (added later): `buildByUnit` (build_unit counts by unit);
+`focusUnit` (default Warship, change with `--unit "Port"`): click batches where
+neighbouring builds are at most 2 s apart, with batch count and size, rate
+inside a batch, gap distribution, distinct tiles and same-tile share, spatial
+extent, holdings and gold at the batch start, and distance from the batch
+centre to the nearest port ordered before it (a lost port is not tracked);
+the holdings curve comes from `state.units`. `blockedByUnit` splits the
+inferred blocked clicks by selected unit. `<id>.chart.json` holds batches
+(position, count, time), ports and the holdings curve for plotting. Build
+positions come from the intent's tile index and the map width recovered from
+the clicks (`mapWidthInferred`).
+
 The ring measure is taken around the centroid of the build points (the target's
 own territory centre is not in the trace). Players: one human; the "players"
 section lists the header's roster.

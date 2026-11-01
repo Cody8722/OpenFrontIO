@@ -11,9 +11,13 @@ import path from "node:path";
 const args = process.argv.slice(2);
 const outIdx = args.indexOf("--out");
 const outDir = outIdx >= 0 ? args.splice(outIdx, 2)[1] : null;
+const unitIdx = args.indexOf("--unit");
+const focusUnit = unitIdx >= 0 ? args.splice(unitIdx, 2)[1] : "Warship";
 const [tracePath, recordPath] = args;
 if (!tracePath) {
-  console.error("usage: summarize.mts <trace.jsonl> [record.json] [--out dir]");
+  console.error(
+    "usage: summarize.mts <trace.jsonl> [record.json] [--out dir] [--unit Warship]",
+  );
   process.exit(2);
 }
 
@@ -393,11 +397,267 @@ summary.players = {
   };
 }
 
+// ---------- per unit type: builds, click batches, blocked clicks ----------
+
+const r1 = (x: number) => Math.round(x * 10) / 10;
+const buildsAll = sent.filter((r) => r.type === "build_unit");
+
+// build_unit by unit type
+{
+  const by: Record<string, number> = {};
+  for (const b of buildsAll) {
+    const u = String(b.params?.unit ?? "unknown");
+    by[u] = (by[u] ?? 0) + 1;
+  }
+  summary.buildByUnit = by;
+}
+
+// World position of every build. The intent only carries a tile index, so the
+// map width is recovered from builds whose click position is known
+// (tile = y * width + x); builds with no click fall back to that width.
+type Located = Row & { wx?: number; wy?: number };
+const located: Located[] = buildsAll.map((b) => ({ ...b }));
+{
+  const clicks = inputs.filter(
+    (r) => (r.type === "pointerup" || r.type === "pointerdown") && r.world,
+  );
+  const hits: { b: Located; x: number; y: number }[] = [];
+  for (const b of located) {
+    for (let i = clicks.length - 1; i >= 0; i--) {
+      const c = clicks[i];
+      if (c.tMs > b.tMs) continue;
+      if (b.tMs - c.tMs > 400) break;
+      hits.push({ b, x: c.world.x, y: c.world.y });
+      break;
+    }
+  }
+  const votes = new Map<number, number>();
+  for (const h of hits) {
+    const t = h.b.params?.tile;
+    if (!num(t) || h.y <= 0) continue;
+    const w = (t - h.x) / h.y;
+    if (Number.isInteger(w) && w > 0) votes.set(w, (votes.get(w) ?? 0) + 1);
+  }
+  let width = 0;
+  let top = 0;
+  for (const [w, n] of votes) {
+    if (n > top) {
+      top = n;
+      width = w;
+    }
+  }
+  const usable = width > 0 && top >= Math.max(3, hits.length * 0.8);
+  summary.mapWidthInferred = usable ? width : null;
+  for (const b of located) {
+    const t = b.params?.tile;
+    if (usable && num(t)) {
+      b.wx = t % width;
+      b.wy = Math.floor(t / width);
+    }
+  }
+  if (!usable) {
+    for (const h of hits) {
+      h.b.wx = h.x;
+      h.b.wy = h.y;
+    }
+  }
+}
+
+// Click batches of the focus unit: neighbouring builds at most 2 s apart.
+{
+  const BATCH_GAP_MS = 2000;
+  const unitBuilds = located.filter((b) => b.params?.unit === focusUnit);
+  const ports = located.filter((b) => b.params?.unit === "Port");
+  const groups: Located[][] = [];
+  for (const b of unitBuilds) {
+    const g = groups[groups.length - 1];
+    if (g && b.tMs - g[g.length - 1].tMs <= BATCH_GAP_MS) g.push(b);
+    else groups.push([b]);
+  }
+  const batches = groups.map((g, i) => {
+    const t0 = g[0].tMs;
+    const t1 = g[g.length - 1].tMs;
+    const gaps = g.slice(1).map((b, j) => b.tMs - g[j].tMs);
+    const tiles = new Map<number, { x?: number; y?: number; count: number }>();
+    for (const b of g) {
+      const k = b.params?.tile as number;
+      const e = tiles.get(k) ?? { x: b.wx, y: b.wy, count: 0 };
+      e.count++;
+      tiles.set(k, e);
+    }
+    const pts = g.filter((b) => num(b.wx) && num(b.wy));
+    let centroid: { x: number; y: number } | null = null;
+    let extent: Row | null = null;
+    if (pts.length > 0) {
+      const cx = pts.reduce((a, b) => a + (b.wx as number), 0) / pts.length;
+      const cy = pts.reduce((a, b) => a + (b.wy as number), 0) / pts.length;
+      const xs = pts.map((b) => b.wx as number);
+      const ys = pts.map((b) => b.wy as number);
+      centroid = { x: r1(cx), y: r1(cy) };
+      extent = {
+        width: Math.max(...xs) - Math.min(...xs) + 1,
+        height: Math.max(...ys) - Math.min(...ys) + 1,
+        maxRadius: r1(
+          Math.max(
+            ...pts.map((b) =>
+              Math.hypot((b.wx as number) - cx, (b.wy as number) - cy),
+            ),
+          ),
+        ),
+      };
+    }
+    // Nearest own port that was already ordered when the batch began.
+    let portDist: number | null = null;
+    if (centroid) {
+      for (const p of ports) {
+        if (p.tMs >= t0 || !num(p.wx) || !num(p.wy)) continue;
+        const d = Math.hypot(p.wx - centroid.x, p.wy - centroid.y);
+        if (portDist === null || d < portDist) portDist = d;
+      }
+    }
+    const maxSame = Math.max(...[...tiles.values()].map((e) => e.count));
+    return {
+      id: i + 1,
+      startMs: t0,
+      endMs: t1,
+      durationMs: r1(t1 - t0),
+      count: g.length,
+      ratePerSecond:
+        g.length > 1 && t1 > t0
+          ? r1(((g.length - 1) / (t1 - t0)) * 1000)
+          : null,
+      gapsMs: gaps.map(r1),
+      distinctTiles: tiles.size,
+      sameTileShare: Math.round((maxSame / g.length) * 1000) / 1000,
+      singleTile: tiles.size === 1,
+      extent,
+      holdingsAtStart: Number(g[0].state?.units?.[focusUnit] ?? 0),
+      goldAtStart: g[0].state?.gold ?? null,
+      centroid,
+      nearestPortDistance: portDist === null ? null : r1(portDist),
+      tiles: [...tiles.entries()].map(([tile, e]) => ({
+        tile,
+        x: e.x,
+        y: e.y,
+        count: e.count,
+      })),
+    };
+  });
+  const big = batches.filter((b) => b.count >= 5);
+  const allGaps = batches.flatMap((b) => b.gapsMs);
+  // Holdings over the whole game, from the state attached to each intent.
+  const holdings: { tMs: number; count: number; gold: number | null }[] = [];
+  for (const r of intents) {
+    const c = Number(r.state?.units?.[focusUnit] ?? 0);
+    if (!r.state) continue;
+    const last = holdings[holdings.length - 1];
+    if (!last || last.count !== c) {
+      holdings.push({ tMs: r.tMs, count: c, gold: r.state.gold ?? null });
+    }
+  }
+  summary.focusUnit = {
+    unit: focusUnit,
+    builds: unitBuilds.length,
+    batchGapMs: BATCH_GAP_MS,
+    batches: batches.length,
+    countPerBatch: describe(batches.map((b) => b.count)),
+    countHistogram: histogram(
+      batches.map((b) => b.count),
+      [2, 3, 5, 10, 20],
+    ),
+    ratePerSecond: describe(batches.map((b) => b.ratePerSecond)),
+    gapsMs: {
+      stats: describe(allGaps),
+      histogram: histogram(allGaps, [50, 100, 150, 200, 300, 500, 1000]),
+    },
+    distinctTilesPerBatch: describe(batches.map((b) => b.distinctTiles)),
+    batchesOfFiveOrMore: {
+      batches: big.length,
+      singleTile: big.filter((b) => b.singleTile).length,
+      sameTileShare: describe(big.map((b) => b.sameTileShare)),
+    },
+    maxHoldings: holdings.length
+      ? Math.max(...holdings.map((h) => h.count))
+      : 0,
+    nearestPortDistance: describe(batches.map((b) => b.nearestPortDistance)),
+    holdingsAtStart: describe(batches.map((b) => b.holdingsAtStart)),
+    goldAtStart: describe(batches.map((b) => b.goldAtStart)),
+    batchList: batches,
+    holdingsCurve: holdings,
+    note: "ports are the Port build orders located so far (a lost or captured port is not tracked); sameTileShare = most-clicked tile / batch size",
+  };
+  const chart = {
+    unit: focusUnit,
+    batchGapMs: BATCH_GAP_MS,
+    mapWidth: summary.mapWidthInferred,
+    batches: batches.map((b) => ({
+      id: b.id,
+      startMs: b.startMs,
+      endMs: b.endMs,
+      count: b.count,
+      x: b.centroid?.x ?? null,
+      y: b.centroid?.y ?? null,
+      distinctTiles: b.distinctTiles,
+      holdingsAtStart: b.holdingsAtStart,
+      goldAtStart: b.goldAtStart,
+      tiles: b.tiles,
+    })),
+    ports: ports
+      .filter((p) => num(p.wx))
+      .map((p) => ({ tMs: p.tMs, x: p.wx, y: p.wy })),
+    holdings: holdings.map((h) => ({ tMs: h.tMs, count: h.count })),
+  };
+  (summary as Row).chartData = chart;
+}
+
+// Clicks that built nothing, per selected unit type. A click only counts as
+// answered when a build of that same unit (or an upgrade) followed it.
+{
+  const clicks = inputs.filter(
+    (r) =>
+      (r.type === "pointerup" || r.type === "drag") &&
+      r.selected &&
+      r.button === 0,
+  );
+  const by: Record<
+    string,
+    { clicks: number; blocked: number; ratio: number | null }
+  > = {};
+  for (const c of clicks) {
+    const u = String(c.selected);
+    const e = (by[u] ??= { clicks: 0, blocked: 0, ratio: null });
+    e.clicks++;
+    const produced = intents.some(
+      (i) =>
+        ((i.type === "build_unit" && i.params?.unit === u) ||
+          i.type === "upgrade_structure") &&
+        i.tMs >= c.tMs - 5 &&
+        i.tMs - c.tMs <= 400,
+    );
+    if (!produced) e.blocked++;
+  }
+  for (const e of Object.values(by)) {
+    e.ratio = e.clicks
+      ? Math.round((e.blocked / e.clicks) * 1000) / 1000
+      : null;
+  }
+  summary.blockedByUnit = {
+    byUnit: by,
+    note: "inferred, reason unknown; matches a build of the same unit or any upgrade within 400 ms, so totals can differ slightly from the overall blocked count",
+  };
+}
+
 // ---------- output ----------
 
 const base = path.basename(tracePath).replace(/\.jsonl$/, "");
 const dir = outDir ?? path.dirname(tracePath);
 fs.mkdirSync(dir, { recursive: true });
+const chartData = summary.chartData;
+delete summary.chartData;
+fs.writeFileSync(
+  path.join(dir, `${base}.chart.json`),
+  JSON.stringify(chartData),
+);
 fs.writeFileSync(
   path.join(dir, `${base}.summary.json`),
   JSON.stringify(summary, null, 2),
@@ -449,6 +709,26 @@ const md = [
   "## Blocked clicks (inferred)",
   "",
   ...block(summary.blocked),
+  "## build_unit by unit type",
+  "",
+  ...block(summary.buildByUnit),
+  `## Click batches: ${summary.focusUnit.unit} (gap <= ${summary.focusUnit.batchGapMs} ms)`,
+  "",
+  ...block({
+    ...summary.focusUnit,
+    batchList: undefined,
+    holdingsCurve: `${summary.focusUnit.holdingsCurve.length} points, see chart.json`,
+  }),
+  "| # | start ms | n | rate/s | tiles | same-tile | holdings | gold | port dist |",
+  "|---|---|---|---|---|---|---|---|---|",
+  ...summary.focusUnit.batchList.map(
+    (b: Row) =>
+      `| ${b.id} | ${b.startMs} | ${b.count} | ${b.ratePerSecond} | ${b.distinctTiles} | ${b.sameTileShare} | ${b.holdingsAtStart} | ${b.goldAtStart} | ${b.nearestPortDistance} |`,
+  ),
+  "",
+  "## Blocked clicks by unit type (inferred)",
+  "",
+  ...block(summary.blockedByUnit),
   "## Confirmation by the turn stream",
   "",
   ...block(summary.confirmation),
